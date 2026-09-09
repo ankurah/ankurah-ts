@@ -380,37 +380,33 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
                       });
                       try {
                         const collectionId = event.collection;
+                        const retriever = EphemeralNodeRetriever.new(collectionId.clone(), this.node, this.cdata);
                         try {
-                          const retriever = EphemeralNodeRetriever.new(collectionId.clone(), this.node, this.cdata);
+                          const _r9 = await forked.applyEvent(retriever, event);
+                          if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
+                          _r9.drop();
+                          const _r10 = this.node.deref().value.policyAgent.checkEvent(this.node, this.cdata, entityBefore, forked, event);
+                          if (_r10.isErr()) return Result.Err(MutationError.fromAccessDenied(_r10.unwrapErr()));
+                          let _moved11 = false;
+                          const attestation = _r10.unwrap();
                           try {
-                            const _r9 = await forked.applyEvent(retriever, event);
-                            if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
-                            _r9.drop();
-                            const _r10 = this.node.deref().value.policyAgent.checkEvent(this.node, this.cdata, entityBefore, forked, event);
-                            if (_r10.isErr()) return Result.Err(MutationError.fromAccessDenied(_r10.unwrapErr()));
-                            let _moved11 = false;
-                            const attestation = _r10.unwrap();
+                            const _b12 = event.clone();
+                            _moved11 = true;
+                            let _moved13 = false;
+                            const attested = Attested.opt(_b12, attestation);
                             try {
-                              const _b12 = event.clone();
-                              _moved11 = true;
-                              let _moved13 = false;
-                              const attested = Attested.opt(_b12, attestation);
-                              try {
-                                attestedEvents.push(attested.clone());
-                                _moved8 = true;
-                                _moved13 = true;
-                                entityAttestedEvents.push([entity, attested]);
-                              } finally {
-                                if (!_moved13) attested.drop();
-                              }
+                              attestedEvents.push(attested.clone());
+                              _moved8 = true;
+                              _moved13 = true;
+                              entityAttestedEvents.push([entity, attested]);
                             } finally {
-                              if (!_moved11) dropOwned(attestation);
+                              if (!_moved13) attested.drop();
                             }
                           } finally {
-                            retriever.drop();
+                            if (!_moved11) dropOwned(attestation);
                           }
                         } finally {
-                          collectionId.drop();
+                          retriever.drop();
                         }
                       } finally {
                         entityBefore.drop();

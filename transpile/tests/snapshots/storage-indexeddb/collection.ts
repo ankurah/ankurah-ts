@@ -406,44 +406,40 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
         const eventObj = Object.new(jsSys.Object.new());
         try {
           const payload = attestedEvent.payload;
+          const _t2 = payload.id();
           try {
-            const _t2 = payload.id();
-            try {
-              const _r3 = eventObj.set(ID_KEY, _t2);
-              if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
-              _r3.drop();
-            } finally {
-              _t2.drop();
-            }
-            const _r4 = eventObj.set(ENTITY_ID_KEY, payload.entityId.toBase64());
-            if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-            _r4.drop();
-            const _r5 = eventObj.set(OPERATIONS_KEY, payload.operations);
-            if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
-            _r5.drop();
-            const _r6 = eventObj.set(ATTESTATIONS_KEY, attestedEvent.attestations);
-            if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
-            _r6.drop();
-            const _r7 = eventObj.set(PARENT_KEY, payload.parent);
-            if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
-            _r7.drop();
-            const _t8 = payload.id();
-            try {
-              const _r9 = Result_JsValue_require(store.putWithKey(eventObj, (_t8)), 'put event in store');
-              if (_r9.isErr()) return Result.Err(MutationError.fromAnyhowError(_r9.unwrapErr()));
-              const request = _r9.unwrap();
-              const _r10 = Result_Event_require((await cbFuture(request, 'success', 'error')), 'await request');
-              if (_r10.isErr()) return Result.Err(MutationError.fromAnyhowError(_r10.unwrapErr()));
-              _r10.drop();
-              const _r11 = Result_Event_require((await cbFuture(transaction, 'complete', 'error')), 'complete transaction');
-              if (_r11.isErr()) return Result.Err(MutationError.fromAnyhowError(_r11.unwrapErr()));
-              _r11.drop();
-              return Result.Ok(true);
-            } finally {
-              _t8.drop();
-            }
+            const _r3 = eventObj.set(ID_KEY, _t2);
+            if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+            _r3.drop();
           } finally {
-            payload.drop();
+            _t2.drop();
+          }
+          const _r4 = eventObj.set(ENTITY_ID_KEY, payload.entityId.toBase64());
+          if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+          _r4.drop();
+          const _r5 = eventObj.set(OPERATIONS_KEY, payload.operations);
+          if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
+          _r5.drop();
+          const _r6 = eventObj.set(ATTESTATIONS_KEY, attestedEvent.attestations);
+          if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+          _r6.drop();
+          const _r7 = eventObj.set(PARENT_KEY, payload.parent);
+          if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
+          _r7.drop();
+          const _t8 = payload.id();
+          try {
+            const _r9 = Result_JsValue_require(store.putWithKey(eventObj, (_t8)), 'put event in store');
+            if (_r9.isErr()) return Result.Err(MutationError.fromAnyhowError(_r9.unwrapErr()));
+            const request = _r9.unwrap();
+            const _r10 = Result_Event_require((await cbFuture(request, 'success', 'error')), 'await request');
+            if (_r10.isErr()) return Result.Err(MutationError.fromAnyhowError(_r10.unwrapErr()));
+            _r10.drop();
+            const _r11 = Result_Event_require((await cbFuture(transaction, 'complete', 'error')), 'complete transaction');
+            if (_r11.isErr()) return Result.Err(MutationError.fromAnyhowError(_r11.unwrapErr()));
+            _r11.drop();
+            return Result.Ok(true);
+          } finally {
+            _t8.drop();
           }
         } finally {
           eventObj.drop();

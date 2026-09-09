@@ -17,8 +17,12 @@ mod literals;
 mod locals;
 mod macro_types;
 mod patterns;
+#[cfg(test)]
+mod pattern_tests;
 mod operands;
 mod prepass;
+#[cfg(test)]
+mod prepass_tests;
 mod scope;
 mod vars;
 #[cfg(test)]

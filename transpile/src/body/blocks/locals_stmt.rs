@@ -171,7 +171,14 @@ impl BodyTranslator<'_> {
             return format!("const {} = {};\n", name, held);
         }
 
-        let keyword = if is_mut_binding(&local.pat) { "let" } else { "const" };
+        // An atomic IS its value in this port, and a shared reference writes
+        // it: `let c = AtomicUsize::new(0); c.store(3, ..)` is a write to the
+        // binding, which a `const` throws on.
+        let keyword = if is_mut_binding(&local.pat) || self.holds_a_written_place(local) {
+            "let"
+        } else {
+            "const"
+        };
         // A Rust shadow introduces a *new* variable. Assigning to the old
         // one instead changed a value other code — a closure that captured
         // it, a caller that owns it — can still see. JavaScript will not
@@ -238,4 +245,24 @@ impl BodyTranslator<'_> {
         }
     }
 
+}
+
+impl BodyTranslator<'_> {
+    /// Does this `let` bind an atomic?
+    ///
+    /// An atomic IS its value in this port, so every write through the shared
+    /// reference Rust allows is an assignment to the binding, and TypeScript's
+    /// `const` throws on one.
+    fn holds_a_written_place(&self, local: &syn::Local) -> bool {
+        let Some(tc) = &self.types else { return false };
+        // Asked for the keyword alone: what this type cannot say is the
+        // statement's own report to make, once, where it is written.
+        self.quietly(|| {
+            let tc = tc.borrow();
+            match tc.resolve_local_type(local) {
+                Ok(ty) => crate::native_types::is_an_atomic(tc.registry, ty.peel_refs()),
+                Err(_) => false,
+            }
+        })
+    }
 }

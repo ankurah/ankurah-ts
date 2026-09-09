@@ -103,7 +103,7 @@ describe('calculated unit tests', () => {
         const callCount = Arc.new(0);
         try {
           const callCountRef = callCount.clone();
-          const _sub = doubled.subscribe(new OwnedClosure([callCountRef], (value: void) => {
+          const _sub = doubled.subscribe(new OwnedClosure([callCountRef], (value: number) => {
             expect(value).toEqual(20);
             unsupported('`fetch_add` WRITES what the `Arc<AtomicUsize>` holds, and it is reached through an accessor that hands out the value rather than the place');
           }));
@@ -130,7 +130,7 @@ describe('calculated unit tests', () => {
       const doubled = Calculated.new(((base) => {
         return new OwnedClosure([base], () => checkedMul(base.get(), 2, 'i32'));
       })(base.read()));
-      const quadrupled = Calculated.new(new OwnedClosure([doubled], () => doubled.get() * 2));
+      const quadrupled = Calculated.new(new OwnedClosure([doubled], () => checkedMul(doubled.get(), 2, 'i32')));
       try {
         expect(quadrupled.get()).toEqual(8);
         base.set(5);
@@ -161,7 +161,7 @@ describe('calculated unit tests', () => {
             expect(doubled.get()).toEqual(2);
             expect(computeCount.value).toEqual(1);
             const unrelatedRead = unrelated.read();
-            const _sub = doubled.subscribe(new OwnedClosure([unrelatedRead], (_value: void) => {
+            const _sub = doubled.subscribe(new OwnedClosure([unrelatedRead], (_value: number) => {
               const _ = unrelatedRead.get();
             }));
             try {

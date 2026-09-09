@@ -143,11 +143,33 @@ impl<'ast> Visit<'ast> for Prepass<'_, '_> {
         self.tc.scopes.pop();
     }
 
+    // A macro written as a STATEMENT is not an expression, so no expression
+    // arm sees it; `assert_eq!(check(), vec![..]);` types what is inside it
+    // only here.
+    fn visit_stmt(&mut self, stmt: &'ast syn::Stmt) {
+        if let syn::Stmt::Macro(mac) = stmt {
+            for arg in crate::macros::macro_argument_exprs(&mac.mac) {
+                self.visit_expr(&arg);
+            }
+            return;
+        }
+        syn::visit::visit_stmt(self, stmt);
+    }
+
     fn visit_local(&mut self, local: &'ast syn::Local) {
         if let Some(init) = &local.init {
             self.visit_expr(&init.expr);
             if let Some(diverge) = &init.diverge {
                 self.visit_expr(&diverge.1);
+            }
+        }
+        // The annotation says what the initialiser is: `let futs:
+        // Vec<Receiver<i32>> = Vec::new()` decides the element the constructor
+        // left open, and nothing below the `let` need say it again.
+        if let (Some(written), Some(init)) = (self.tc.local_annotation(local), &local.init) {
+            if let Some(found) = self.type_of(&init.expr) {
+                self.tc
+                    .constrain_here(syn::spanned::Spanned::span(&init.expr), &written, &found);
             }
         }
         let ty = self.tc.resolve_local_type(local).ok();
@@ -230,6 +252,12 @@ impl<'ast> Visit<'ast> for Prepass<'_, '_> {
             syn::Expr::Closure(closure) => {
                 let want = self.tc.closure_want(closure);
                 let signature = self.tc.closure_signature(closure, want.as_ref());
+                // What the closure answers settles what its position projects,
+                // and only here: the captures a block prepared above the
+                // closure are in scope on this walk and not at the call.
+                if let Some(want) = &want {
+                    self.tc.constrain_callable_result(closure, want, signature.ret.as_ref());
+                }
                 let bindings = signature.bindings;
                 // A `return` inside a closure leaves through the closure's own
                 // result, not the enclosing function's.
@@ -247,6 +275,15 @@ impl<'ast> Visit<'ast> for Prepass<'_, '_> {
                 self.visit_expr(&closure.body);
                 self.tc.scopes.pop();
                 self.returns = outer;
+            }
+            // A macro's arguments are tokens, so no visitor reaches them; the
+            // emitter parses them and types what it finds, and this walk has to
+            // read the same expressions or it reads less of the body.
+            syn::Expr::Macro(mac) => {
+                self.type_of(expr);
+                for arg in crate::macros::macro_argument_exprs(&mac.mac) {
+                    self.visit_expr(&arg);
+                }
             }
             other => {
                 self.type_of(other);

@@ -115,7 +115,7 @@ export class ReactorSubscription<E extends AbstractEntity & Filterable = Entity,
   listen(listener: Listener): ListenerGuard {
     const _t0 = this._0.value.broadcast.reference();
     try {
-      return _t0.listen(new BroadcastListener('NotifyOnly', { _0: Arc.new(new OwnedClosure([listener], () => invokeRef(listener, []))) }));
+      return _t0.listen(new BroadcastListener('NotifyOnly', { _0: Arc.new(new OwnedClosure([listener], () => invokeRef(listener.value, []))) }));
     } finally {
       _t0.drop();
     }

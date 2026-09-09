@@ -294,6 +294,15 @@ pub fn assigned_fields(file: &crate::types::RustFile) -> HashSet<String> {
             match expr {
                 syn::Expr::Assign(assign) => self.record(&assign.left),
                 syn::Expr::Binary(bin) if crate::body::is_assign_op(&bin.op) => self.record(&bin.left),
+                // An atomic IS its value in this port, so a write through one
+                // is an assignment to the field that holds it, whatever the
+                // Rust wrote. `self.hits.fetch_add(1, ..)` reads as a call.
+                syn::Expr::MethodCall(call)
+                    if crate::native_types::ATOMIC_WRITES
+                        .contains(&call.method.to_string().as_str()) =>
+                {
+                    self.record(&call.receiver)
+                }
                 _ => {}
             }
             syn::visit::visit_expr(self, expr);

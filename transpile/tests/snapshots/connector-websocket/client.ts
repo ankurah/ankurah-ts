@@ -67,14 +67,8 @@ export class WebsocketClient extends Struct {
   jsConnectionState(): ConnectionStateEnumSignal {
     const _t0 = this.inner.value.state.read();
     try {
-      let _moved1 = false;
       const sig = _t0.map((state) => state);
-      try {
-        _moved1 = true;
-        return new ConnectionStateEnumSignal(sig, []);
-      } finally {
-        if (!_moved1) dropOwned(sig);
-      }
+      return new ConnectionStateEnumSignal(sig, []);
     } finally {
       _t0.drop();
     }

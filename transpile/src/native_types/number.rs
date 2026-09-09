@@ -125,11 +125,21 @@ pub fn translate(
             return atomic_rmw("wrappingSub", "-", receiver, &args[0], width)
         }
 
-        // Compare-and-swap
-        "compare_exchange" if args.len() >= 2 => format!(
-            "(() => {{ if ({} === {}) {{ {} = {}; return true; }} return false; }})()",
-            receiver, args[0], receiver, args[1]
+        // The value it swapped out, which is what Rust's `swap` answers.
+        "swap" if args.len() >= 1 => format!(
+            "(() => {{ const _v = {r}; {r} = {n}; return _v; }})()",
+            r = receiver,
+            n = args[0]
         ),
+
+        // Compare-and-swap answers the value it FOUND: `Ok(old)` where the
+        // swap happened, `Err(old)` where it did not. Answered as a bare
+        // boolean, `is_ok` and `unwrap` ran on something that has neither.
+        "compare_exchange" | "compare_exchange_weak" if args.len() >= 2 => {
+            let found = format!("(() => {{ const _v = {r}; if (_v === {c})", r = receiver, c = args[0]);
+            let swap = format!(" {{ {r} = {n}; return Result.Ok(_v); }}", r = receiver, n = args[1]);
+            format!("{found}{swap} return Result.Err(_v); }})()")
+        }
 
         // `Ord::cmp` and `PartialOrd::partial_cmp` on a number: the ordering the
         // port writes as `-1 | 0 | 1`. A primitive has no `compareTo` method

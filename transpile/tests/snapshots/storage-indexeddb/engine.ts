@@ -9,7 +9,7 @@ import { CollectionId } from '@ankurah/proto';
 
 export class IndexedDBStorageEngine extends Struct implements StorageEngine {
   readonly db: Database;
-  readonly prefixGuardDisabled: Arc<boolean>;
+  prefixGuardDisabled: Arc<boolean>;
 
   constructor(db: Database, prefixGuardDisabled: Arc<boolean>) {
     super();

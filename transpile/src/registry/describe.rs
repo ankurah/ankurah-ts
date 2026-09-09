@@ -57,6 +57,35 @@ impl TypeRegistry {
         }
     }
 
+    /// One candidate of an ambiguity, with the `where` clause that tells it
+    /// from the others.
+    ///
+    /// Two impls of one trait for one type differ only in what they REQUIRE, so
+    /// a message that leaves the clause out prints the same text twice and
+    /// names neither of them.
+    pub fn describe_candidate(&self, callee: &Callee) -> String {
+        let written = self.describe_callee(callee);
+        let (Callee::TraitImpl(id, _) | Callee::Blanket(id, _) | Callee::Inherent(id, _)) = callee
+        else {
+            return written;
+        };
+        match self.describe_where(&self.impl_def(*id).bounds) {
+            Some(bounds) => format!("{written} where {bounds}"),
+            None => written,
+        }
+    }
+
+    /// An impl's own `where` clause, in the order it was written.
+    fn describe_where(&self, bounds: &[super::impls::Bound]) -> Option<String> {
+        (!bounds.is_empty()).then(|| {
+            bounds
+                .iter()
+                .map(|b| format!("{}: {}", self.describe(&b.subject), self.describe_trait(&b.trait_ref)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+    }
+
     fn describe_traits(&self, traits: &[TraitRef]) -> String {
         traits
             .iter()
@@ -122,7 +151,7 @@ impl MethodError {
                 reg.describe(at),
                 candidates
                     .iter()
-                    .map(|c| reg.describe_callee(c))
+                    .map(|c| reg.describe_candidate(c))
                     .collect::<Vec<_>>()
                     .join(" and ")
             ),

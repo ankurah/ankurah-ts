@@ -56,6 +56,16 @@ pub fn consumed_by_the_call(
             .collect(),
         Ty::ImplTrait { bounds } => bounds.iter().collect(),
         Ty::Dyn { traits } => traits.iter().collect(),
+        // Through the same wrappers a callable is written inside: a
+        // `Box<dyn FnOnce()>` is consumed by the call exactly as the
+        // `dyn FnOnce()` is.
+        Ty::Named { id, args } => {
+            let inner = args.first();
+            match (inner, CALLABLE_WRAPPERS.iter().any(|path| reg.system_type(path) == Some(*id))) {
+                (Some(inner), true) => return consumed_by_the_call(reg, inner, param_bounds),
+                _ => Vec::new(),
+            }
+        }
         _ => Vec::new(),
     };
     // `FnOnce` alone. A closure bounded by `Fn` is also an `FnOnce` in Rust, and
@@ -149,14 +159,11 @@ pub fn callable_bound_for(
     declared: &Ty,
     bounds: &[(String, TraitRef)],
 ) -> Option<Ty> {
-    // GG6: parentheses are punctuation. Matched as a literal `Expr::Closure`,
-    // `apply((|held| held.n))` missed the callee's `Fn` bound entirely, so the
-    // parameter was typed by nothing and the value it was handed by value was
-    // released by nobody.
-    match crate::infer::calls::unparenthesise(written?) {
-        syn::Expr::Closure(_) => callable_bound_of(reg, declared, bounds),
-        _ => None,
-    }
+    // Parentheses are punctuation, and so is the block a closure's captures
+    // are prepared in: `Calc::make({ let r = ..; move || .. })` stands in the
+    // same callable position a bare closure does.
+    crate::infer::calls::as_closure(written?)?;
+    callable_bound_of(reg, declared, bounds)
 }
 
 pub fn callable_bound_of(
@@ -394,7 +401,7 @@ pub fn is_settled(ty: &Ty, in_scope: &[String]) -> bool {
     !has_infer(ty) && !ty.mentions_any_var() && !holds_unbound(ty, in_scope)
 }
 
-fn holds_unbound(ty: &Ty, in_scope: &[String]) -> bool {
+pub fn holds_unbound(ty: &Ty, in_scope: &[String]) -> bool {
     let unbound = |name: &String| name != "Self" && !in_scope.iter().any(|p| p == name);
     match ty {
         Ty::Param(name) => unbound(name),

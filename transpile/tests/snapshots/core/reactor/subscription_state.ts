@@ -105,35 +105,31 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
       try {
         const state = _t1;
         _t0.drop();
+        let _moved2 = false;
+        let updateItems = [];
         try {
-          let _moved2 = false;
-          let updateItems = [];
-          try {
-            for (const [queryId, queryState] of state.queries) {
-              for (const entityId of queryState.resultset.keys()) {
-                {
-                  const _v = state.entities.get(entityId);
-                  if (_v != null) {
-                    const entity = _v;
-                    updateItems.push(new ReactorUpdateItem(entity.clone(), [], [[queryId, new MembershipChange('Remove', {})]]));
-                  }
+          for (const [queryId, queryState] of state.queries) {
+            for (const entityId of queryState.resultset.keys()) {
+              {
+                const _v = state.entities.get(entityId);
+                if (_v != null) {
+                  const entity = _v;
+                  updateItems.push(new ReactorUpdateItem(entity.clone(), [], [[queryId, new MembershipChange('Remove', {})]]));
                 }
               }
-              queryState.resultset.clear();
-              queryState.resultset.setLoaded(false);
             }
-            state.entitySubscriptions.clear();
-            state.entities.clear();
-            if (!(updateItems.length === 0)) {
-              _moved2 = true;
-              const reactorUpdate = new ReactorUpdate(updateItems);
-              state.broadcast.send(reactorUpdate);
-            }
-          } finally {
-            if (!_moved2) dropOwned(updateItems);
+            queryState.resultset.clear();
+            queryState.resultset.setLoaded(false);
+          }
+          state.entitySubscriptions.clear();
+          state.entities.clear();
+          if (!(updateItems.length === 0)) {
+            _moved2 = true;
+            const reactorUpdate = new ReactorUpdate(updateItems);
+            state.broadcast.send(reactorUpdate);
           }
         } finally {
-          state.drop();
+          if (!_moved2) dropOwned(updateItems);
         }
       } finally {
         _t1.drop();
@@ -219,102 +215,98 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
         let stateGuard = this.deref().state.lock();
         try {
           const state = stateGuard.value;
+          const _m1 = state.queries.get(queryId);
+          const _r2 = (_m1 != null ? Result.Ok(_m1!) : Result.Err((() => AnyhowError.msg('Query not found for update'))()));
+          if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+          const queryState = _r2.unwrap();
+          const isFirstUpdate = (queryState.selection == null);
+          const oldSelection = queryState.selection.replace(selection.clone());
           try {
-            const _m1 = state.queries.get(queryId);
-            const _r2 = (_m1 != null ? Result.Ok(_m1!) : Result.Err((() => AnyhowError.msg('Query not found for update'))()));
-            if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
-            const queryState = _r2.unwrap();
-            const isFirstUpdate = (queryState.selection == null);
-            const oldSelection = queryState.selection.replace(selection.clone());
-            try {
-              const _r3 = (selection.orderBy != null ? ((ob) => {
-                try {
-                  return buildKeySpecFromSelection(ob.asSlice(), queryState.resultset);
-                } finally {
-                  dropOwned(ob);
-                }
-              })(selection.orderBy!) : null).transpose();
-              if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
-              queryState.resultset.orderBy(_r3.unwrap());
-              if (isFirstUpdate || valueNotEquals((oldSelection != null ? ((s) => s.limit)(oldSelection!) : null), selection.limit)) {
-                queryState.resultset.limit((selection.limit != null ? ((l) => Number(BigInt.asUintN(32, l)))(selection.limit!) : null));
-              }
-              let _moved4 = false;
-              let rwResultset = queryState.resultset.write();
+            const _r3 = (selection.orderBy != null ? ((ob) => {
               try {
-                let newlyAdded = [];
-                rwResultset.markAllDirty();
-                for (const entity of includedEntities) {
-                  if (evaluatePredicate(entity, selection.predicate).unwrapOr(false)) {
-                    const entityId = AbstractEntity.id(entity);
-                    if (!rwResultset.contains(entityId)) {
-                      rwResultset.add(entity.clone());
-                      state.entities.set(entityId, entity.clone());
-                      state.entitySubscriptions.add(entityId);
-                      reactorUpdates.pushInitial(entity, queryId);
-                      newlyAdded.push(entity);
-                    }
-                  }
-                }
-                let removedEntities: EntityId[] = [];
-                rwResultset.retainDirty((entity) => {
-                  {
-                    const _v = evaluatePredicate(entity, selection.predicate);
-                    if (_v.isOk()) {
-                      const _v1 = _v.unwrap();
-                      return true;
-                    }
-                  };
-                  const entityId = entity.id();
-                  tracing.debug(`Entity ${entityId} no longer matches predicate`);
-                  removedEntities.push(entityId);
-                  reactorUpdates.pushRemove(entity, queryId);
-                  return false;
-                });
-                queryState.paused = false;
-                queryState.version = version;
-                rwResultset.setLoaded(true);
-                _moved4 = true;
-                rwResultset.drop();
-                _moved0 = true;
-                stateGuard.drop();
-                const shouldUpdateWatchers = (() => {
-                  if (isFirstUpdate) {
-                    return true;
-                  } else {
-                    const _v2 = oldSelection;
-                    if (_v2 != null) {
-                      const oldSel = _v2;
-                      return !oldSel.predicate.equals(selection.predicate);
-                    } else {
-                    return false;
-                  }
-                  }
-                })();
-                if (shouldUpdateWatchers) {
-                  const oldPred = (oldSelection != null ? ((s) => s.predicate)(oldSelection!) : null);
-                  this.updatePredicateWatchers(queryId, collectionId, oldPred, selection.predicate);
-                }
-                if (!(newlyAdded.length === 0)) {
-                  this.addEntityWatchers(queryId, [...newlyAdded].map((e) => AbstractEntity.id(e)));
-                }
-                if (!(removedEntities.length === 0)) {
-                  let watcherSet = this.deref().watcherSet.value.lock();
-                  try {
-                    watcherSet.value.cleanupRemovedPredicateWatchers(this.deref().id, queryId, removedEntities);
-                  } finally {
-                    watcherSet.drop();
-                  }
-                }
-                return Result.Ok(newlyAdded);
+                return buildKeySpecFromSelection(ob.asSlice(), queryState.resultset);
               } finally {
-                if (!_moved4) rwResultset.drop();
+                dropOwned(ob);
               }
+            })(selection.orderBy!) : null).transpose();
+            if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+            queryState.resultset.orderBy(_r3.unwrap());
+            if (isFirstUpdate || valueNotEquals((oldSelection != null ? ((s) => s.limit)(oldSelection!) : null), selection.limit)) {
+              queryState.resultset.limit((selection.limit != null ? ((l) => Number(BigInt.asUintN(32, l)))(selection.limit!) : null));
+            }
+            let _moved4 = false;
+            let rwResultset = queryState.resultset.write();
+            try {
+              let newlyAdded = [];
+              rwResultset.markAllDirty();
+              for (const entity of includedEntities) {
+                if (evaluatePredicate(entity, selection.predicate).unwrapOr(false)) {
+                  const entityId = AbstractEntity.id(entity);
+                  if (!rwResultset.contains(entityId)) {
+                    rwResultset.add(entity.clone());
+                    state.entities.set(entityId, entity.clone());
+                    state.entitySubscriptions.add(entityId);
+                    reactorUpdates.pushInitial(entity, queryId);
+                    newlyAdded.push(entity);
+                  }
+                }
+              }
+              let removedEntities: EntityId[] = [];
+              rwResultset.retainDirty((entity) => {
+                {
+                  const _v = evaluatePredicate(entity, selection.predicate);
+                  if (_v.isOk()) {
+                    const _v1 = _v.unwrap();
+                    return true;
+                  }
+                };
+                const entityId = entity.id();
+                tracing.debug(`Entity ${entityId} no longer matches predicate`);
+                removedEntities.push(entityId);
+                reactorUpdates.pushRemove(entity, queryId);
+                return false;
+              });
+              queryState.paused = false;
+              queryState.version = version;
+              rwResultset.setLoaded(true);
+              _moved4 = true;
+              rwResultset.drop();
+              _moved0 = true;
+              stateGuard.drop();
+              const shouldUpdateWatchers = (() => {
+                if (isFirstUpdate) {
+                  return true;
+                } else {
+                  const _v2 = oldSelection;
+                  if (_v2 != null) {
+                    const oldSel = _v2;
+                    return !oldSel.predicate.equals(selection.predicate);
+                  } else {
+                  return false;
+                }
+                }
+              })();
+              if (shouldUpdateWatchers) {
+                const oldPred = (oldSelection != null ? ((s) => s.predicate)(oldSelection!) : null);
+                this.updatePredicateWatchers(queryId, collectionId, oldPred, selection.predicate);
+              }
+              if (!(newlyAdded.length === 0)) {
+                this.addEntityWatchers(queryId, [...newlyAdded].map((e) => AbstractEntity.id(e)));
+              }
+              if (!(removedEntities.length === 0)) {
+                let watcherSet = this.deref().watcherSet.value.lock();
+                try {
+                  watcherSet.value.cleanupRemovedPredicateWatchers(this.deref().id, queryId, removedEntities);
+                } finally {
+                  watcherSet.drop();
+                }
+              }
+              return Result.Ok(newlyAdded);
             } finally {
-              dropOwned(oldSelection);
+              if (!_moved4) rwResultset.drop();
             }
           } finally {
-            state.drop();
+            dropOwned(oldSelection);
           }
         } finally {
           if (!_moved0) stateGuard.drop();
@@ -373,112 +365,108 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
             let stateGuard = this.deref().state.lock();
             try {
               const state = stateGuard.value;
-              try {
-                for (const queryCandidate of candidates.queryIter()) {
-                  try {
-                    const queryId = queryCandidate.queryId;
-                    const _m4 = (() => {
-                      const _v1 = state.queries.get(queryId);
-                      if (_v1 != null) {
-                        const qs = _v1;
-                        if (!qs.paused) {
-                          return qs;
-                        }
+              for (const queryCandidate of candidates.queryIter()) {
+                try {
+                  const queryId = queryCandidate.queryId;
+                  const _m4 = (() => {
+                    const _v1 = state.queries.get(queryId);
+                    if (_v1 != null) {
+                      const qs = _v1;
+                      if (!qs.paused) {
+                        return qs;
                       }
-                      {
-                        return { $jump: 'continue' };
+                    }
+                    {
+                      return { $jump: 'continue' };
+                    }
+                  })();
+                  if ((_m4 as any)?.$jump === 'continue') continue;
+                  const queryState = (_m4 as any);
+                  const selection = queryState.selection.asRef();
+                  tracing.debug(`\tevaluate_changes query: ${queryId} ${selection}`);
+                  for (const change of queryCandidate.iter()) {
+                    const entity = change.entity();
+                    const entityId = AbstractEntity.id(entity);
+                    tracing.debug(`Subscription ${this.id()} evaluating entity ${entityId} for query ${queryId}`);
+                    const matches = evaluatePredicate(entity, selection.predicate).unwrapOr(false);
+                    const didMatch = queryState.resultset.containsKey(entityId);
+                    const membershipChange = (() => {
+                      const _v3 = [didMatch, matches];
+                      if ((_v3[0] === false) && (_v3[1] === true)) {
+                        {
+                          const entityClone = entity.clone();
+                          queryState.resultset.write().add(entityClone.clone());
+                          state.entities.set(entityId, entityClone);
+                          watcherChanges.push(WatcherChange.add(entityId, this.deref().id, queryId));
+                          return new MembershipChange('Add', {});
+                        }
+                      } else if ((_v3[0] === true) && (_v3[1] === false)) {
+                        {
+                          queryState.resultset.write().remove(entityId);
+                          watcherChanges.push(WatcherChange.remove(entityId, this.deref().id, queryId));
+                          return new MembershipChange('Remove', {});
+                        }
+                      } else {
+                        {
+                          watcherChanges.push((matches ? WatcherChange.add(entityId, this.deref().id, queryId) : WatcherChange.remove(entityId, this.deref().id, queryId)));
+                          return null;
+                        }
                       }
                     })();
-                    if ((_m4 as any)?.$jump === 'continue') continue;
-                    const queryState = (_m4 as any);
-                    const selection = queryState.selection.asRef();
-                    tracing.debug(`\tevaluate_changes query: ${queryId} ${selection}`);
-                    for (const change of queryCandidate.iter()) {
-                      const entity = change.entity();
-                      const entityId = AbstractEntity.id(entity);
-                      tracing.debug(`Subscription ${this.id()} evaluating entity ${entityId} for query ${queryId}`);
-                      const matches = evaluatePredicate(entity, selection.predicate).unwrapOr(false);
-                      const didMatch = queryState.resultset.containsKey(entityId);
-                      const membershipChange = (() => {
-                        const _v3 = [didMatch, matches];
-                        if ((_v3[0] === false) && (_v3[1] === true)) {
-                          {
-                            const entityClone = entity.clone();
-                            queryState.resultset.write().add(entityClone.clone());
-                            state.entities.set(entityId, entityClone);
-                            watcherChanges.push(WatcherChange.add(entityId, this.deref().id, queryId));
-                            return new MembershipChange('Add', {});
-                          }
-                        } else if ((_v3[0] === true) && (_v3[1] === false)) {
-                          {
-                            queryState.resultset.write().remove(entityId);
-                            watcherChanges.push(WatcherChange.remove(entityId, this.deref().id, queryId));
-                            return new MembershipChange('Remove', {});
-                          }
-                        } else {
-                          {
-                            watcherChanges.push((matches ? WatcherChange.add(entityId, this.deref().id, queryId) : WatcherChange.remove(entityId, this.deref().id, queryId)));
-                            return null;
-                          }
-                        }
-                      })();
-                      const entitySubscribed = state.entitySubscriptions.has(entityId);
-                      if (matches || didMatch || entitySubscribed) {
-                        const item = items.entry(entityId).orInsertWith(() => new ReactorUpdateItem(entity.clone(), change.events().map((e) => derivedClone(e)), []));
-                        {
-                          const _v4 = membershipChange;
-                          if (_v4 != null) {
-                            const mc = _v4;
-                            item.predicateRelevance.push([queryId, mc]);
-                          }
+                    const entitySubscribed = state.entitySubscriptions.has(entityId);
+                    if (matches || didMatch || entitySubscribed) {
+                      const item = items.entry(entityId).orInsertWith(() => new ReactorUpdateItem(entity.clone(), change.events().map((e) => derivedClone(e)), []));
+                      {
+                        const _v4 = membershipChange;
+                        if (_v4 != null) {
+                          const mc = _v4;
+                          item.predicateRelevance.push([queryId, mc]);
                         }
                       }
                     }
-                  } finally {
-                    queryCandidate.drop();
-                  }
-                }
-                for (const change of candidates.entityIter()) {
-                  const entity = change.entity();
-                  const entityId = AbstractEntity.id(entity);
-                  if (state.entitySubscriptions.has(entityId)) {
-                    items.entry(entityId).orInsert(new ReactorUpdateItem(entity.clone(), change.events().map((e) => derivedClone(e)), []));
-                  }
-                }
-                let _moved5 = false;
-                const gapsToFill = this.collectGapsToFillInternal(state);
-                try {
-                  let _moved6 = false;
-                  const broadcast = state.broadcast.clone();
-                  try {
-                    _moved2 = true;
-                    stateGuard.drop();
-                    _moved1 = true;
-                    let _moved7 = false;
-                    const updateItems = items.intoValues();
-                    try {
-                      if (!(gapsToFill.length === 0)) {
-                        _moved7 = true;
-                        _moved5 = true;
-                        _moved6 = true;
-                        spawn(this.clone().fillGapsAndNotify(updateItems, gapsToFill, broadcast));
-                      } else if (!(updateItems.length === 0)) {
-                        _moved7 = true;
-                        broadcast.send(new ReactorUpdate(updateItems));
-                      }
-                      _moved0 = true;
-                      return watcherChanges;
-                    } finally {
-                      if (!_moved7) dropOwned(updateItems);
-                    }
-                  } finally {
-                    if (!_moved6) broadcast.drop();
                   }
                 } finally {
-                  if (!_moved5) dropOwned(gapsToFill);
+                  queryCandidate.drop();
+                }
+              }
+              for (const change of candidates.entityIter()) {
+                const entity = change.entity();
+                const entityId = AbstractEntity.id(entity);
+                if (state.entitySubscriptions.has(entityId)) {
+                  items.entry(entityId).orInsert(new ReactorUpdateItem(entity.clone(), change.events().map((e) => derivedClone(e)), []));
+                }
+              }
+              let _moved5 = false;
+              const gapsToFill = this.collectGapsToFillInternal(state);
+              try {
+                let _moved6 = false;
+                const broadcast = state.broadcast.clone();
+                try {
+                  _moved2 = true;
+                  stateGuard.drop();
+                  _moved1 = true;
+                  let _moved7 = false;
+                  const updateItems = items.intoValues();
+                  try {
+                    if (!(gapsToFill.length === 0)) {
+                      _moved7 = true;
+                      _moved5 = true;
+                      _moved6 = true;
+                      spawn(this.clone().fillGapsAndNotify(updateItems, gapsToFill, broadcast));
+                    } else if (!(updateItems.length === 0)) {
+                      _moved7 = true;
+                      broadcast.send(new ReactorUpdate(updateItems));
+                    }
+                    _moved0 = true;
+                    return watcherChanges;
+                  } finally {
+                    if (!_moved7) dropOwned(updateItems);
+                  }
+                } finally {
+                  if (!_moved6) broadcast.drop();
                 }
               } finally {
-                state.drop();
+                if (!_moved5) dropOwned(gapsToFill);
               }
             } finally {
               if (!_moved2) stateGuard.drop();
@@ -656,44 +644,40 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
 
   extractGapData(queryId: QueryId, queryState: QueryState<E>): GapFillData<E> | null {
     const resultset = queryState.resultset;
+    if (!resultset.isGapDirty()) {
+      return null;
+    }
+    const _r0 = resultset.getLimit();
+    if (_r0 == null) return null;
+    const limit = _r0;
+    const currentLen = resultset.len();
+    if (currentLen >= limit) {
+      return null;
+    }
+    const gapSize = checkedSub(limit, currentLen, 'usize');
+    const lastEntity = resultset.lastEntity();
+    let _moved1 = false;
+    const selection = (queryState.selection.clone() ?? (() => { throw new Error('extract_gap_data called before update_query'); })());
     try {
-      if (!resultset.isGapDirty()) {
-        return null;
-      }
-      const _r0 = resultset.getLimit();
-      if (_r0 == null) return null;
-      const limit = _r0;
-      const currentLen = resultset.len();
-      if (currentLen >= limit) {
-        return null;
-      }
-      const gapSize = checkedSub(limit, currentLen, 'usize');
-      const lastEntity = resultset.lastEntity();
-      let _moved1 = false;
-      const selection = (queryState.selection.clone() ?? (() => { throw new Error('extract_gap_data called before update_query'); })());
+      let _moved3 = false;
+      const _b2 = queryState.gapFetcher.clone();
       try {
-        let _moved3 = false;
-        const _b2 = queryState.gapFetcher.clone();
+        let _moved5 = false;
+        const _b4 = queryState.collectionId.clone();
         try {
-          let _moved5 = false;
-          const _b4 = queryState.collectionId.clone();
-          try {
-            const _b6 = resultset.clone();
-            _moved3 = true;
-            _moved5 = true;
-            _moved1 = true;
-            return [queryId, _b2, _b4, selection, _b6, lastEntity, gapSize];
-          } finally {
-            if (!_moved5) dropOwned(_b4);
-          }
+          const _b6 = resultset.clone();
+          _moved3 = true;
+          _moved5 = true;
+          _moved1 = true;
+          return [queryId, _b2, _b4, selection, _b6, lastEntity, gapSize];
         } finally {
-          if (!_moved3) dropOwned(_b2);
+          if (!_moved5) dropOwned(_b4);
         }
       } finally {
-        if (!_moved1) selection.drop();
+        if (!_moved3) dropOwned(_b2);
       }
     } finally {
-      resultset.drop();
+      if (!_moved1) selection.drop();
     }
   }
 

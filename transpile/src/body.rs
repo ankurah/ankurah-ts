@@ -499,7 +499,21 @@ impl<'a> BodyTranslator<'a> {
                 // the callee cannot see which. `invoke` is the one place that
                 // tells them apart.
                 if let Some(helper) = self.bound_closure_helper(&call.func) {
-                    let mut through = vec![crate::body::unwrapped(&func)];
+                    let accessors = self.accessors_to_the_callable(&call.func);
+                    let mut reached = crate::body::unwrapped(&func);
+                    // A callee an expression PRODUCED is the statement's to
+                    // release, unless the call is what consumes it — and then a
+                    // name is all a holder's accessor needs.
+                    reached = match helper {
+                        "invoke" if accessors.is_empty() => reached,
+                        "invoke" if crate::body::is_place(&call.func) => reached,
+                        "invoke" => self.hoist_name(reached),
+                        _ => self.hoist_produced(&call.func, reached),
+                    };
+                    for accessor in accessors {
+                        reached = format!("{}.{}", reached, accessor);
+                    }
+                    let mut through = vec![reached];
                     through.extend(args.iter().cloned());
                     return format!("{}({})", helper, through.join(", "));
                 }

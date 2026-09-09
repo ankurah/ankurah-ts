@@ -11,9 +11,12 @@
 //! writes for itself, the callable the position expects, and — for the result
 //! only — the body's own tail.
 
+use syn::spanned::Spanned;
+
 use super::expected;
 use super::TypeContext;
-use crate::ty::Ty;
+use crate::diag::Diag;
+use crate::ty::{TraitRef, Ty};
 
 /// A closure's signature, as far as those three sources settle it.
 ///
@@ -227,5 +230,90 @@ pub(crate) fn names_bound(pat: &syn::Pat, ty: Option<&Ty>) -> Vec<(String, Optio
         // has to see the name already taken and freshen itself, or two `const
         // _` land in one scope and `signals/porcelain/wait.ts` stops loading.
         other => vec![(crate::body::BodyTranslator::pat_static(other), ty.cloned())],
+    }
+}
+
+impl TypeContext<'_> {
+    /// Ask something with a closure's parameters in scope, then take them back
+    /// out again whatever the answer was.
+    pub(super) fn with_closure_params<T>(
+        &self,
+        params: &[(String, Option<Ty>)],
+        ask: impl FnOnce() -> T,
+    ) -> T {
+        self.closure_params.borrow_mut().push(params.to_vec());
+        let answer = ask();
+        self.closure_params.borrow_mut().pop();
+        answer
+    }
+
+    /// What a closure parameter opened by `with_closure_params` holds, and
+    /// whether the name is one of them at all.
+    pub(super) fn closure_param(&self, name: &str) -> Option<Option<Ty>> {
+        self.closure_params
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|frame| {
+                frame
+                    .iter()
+                    .find(|(param, _)| param == name)
+                    .map(|(_, ty)| ty.clone())
+            })
+    }
+
+    /// The callable type a closure has: `impl Fn(A, B) -> R` with what the
+    /// signature settled, which is the type Rust gives a closure everywhere a
+    /// closure's type is asked for.
+    ///
+    /// A parameter or a result the engine could not settle is refused rather
+    /// than filled with a guess, because a wrong `Fn` bound would pick a wrong
+    /// impl at every call that takes this closure.
+    pub(super) fn callable_type(
+        &self,
+        closure: &syn::ExprClosure,
+        sig: &super::closures::ClosureSig,
+    ) -> Result<Ty, Diag> {
+        let untyped = sig.untyped_params();
+        if !untyped.is_empty() {
+            return Err(self.refuse(
+                closure.span(),
+                format!(
+                    "this closure's parameter{} {} typed by nothing the engine can read: \
+                     neither an annotation on the closure nor the position it stands in says \
+                     what {} hold{}",
+                    if untyped.len() == 1 { " is" } else { "s are" },
+                    untyped
+                        .iter()
+                        .map(|n| format!("`{}`", n))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    if untyped.len() == 1 { "it" } else { "they" },
+                    if untyped.len() == 1 { "s" } else { "" },
+                ),
+            ));
+        }
+        let Some(id) = self.registry.system_type("std::ops::Fn") else {
+            return Err(self.refuse(closure.span(), "`Fn` is not declared"));
+        };
+        let inputs: Vec<Ty> = sig.params.iter().filter_map(|(_, ty)| ty.clone()).collect();
+        Ok(Ty::ImplTrait {
+            bounds: vec![TraitRef {
+                id,
+                args: vec![if inputs.is_empty() {
+                    Ty::Unit
+                } else {
+                    Ty::Tuple(inputs)
+                }],
+                bindings: vec![(
+                    "Output".to_string(),
+                    // A body the engine could not type says nothing about what
+                    // the closure answers, and `()` would be an answer.
+                    sig.ret
+                        .clone()
+                        .unwrap_or_else(|| self.unresolvable(closure.span())),
+                )],
+            }],
+        })
     }
 }

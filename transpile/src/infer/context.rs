@@ -41,7 +41,7 @@ pub struct TypeContext<'a> {
     /// visible, and `resolve_expr` takes `&self` because it answers questions
     /// rather than translating. This is that one scope, opened for the length
     /// of the question and closed after it.
-    closure_params: std::cell::RefCell<Vec<Vec<(String, Option<Ty>)>>>,
+    pub(super) closure_params: std::cell::RefCell<Vec<Vec<(String, Option<Ty>)>>>,
     /// The unknowns of the body being typed. A variable stands where the source
     /// left a type for a later use to decide, and what nothing decides is
     /// reported rather than filled in.
@@ -90,34 +90,6 @@ impl<'a> TypeContext<'a> {
             constraining_through: std::cell::RefCell::new(None),
             sink,
         }
-    }
-
-    /// Ask something with a closure's parameters in scope, then take them back
-    /// out again whatever the answer was.
-    pub(super) fn with_closure_params<T>(
-        &self,
-        params: &[(String, Option<Ty>)],
-        ask: impl FnOnce() -> T,
-    ) -> T {
-        self.closure_params.borrow_mut().push(params.to_vec());
-        let answer = ask();
-        self.closure_params.borrow_mut().pop();
-        answer
-    }
-
-    /// What a closure parameter opened by `with_closure_params` holds, and
-    /// whether the name is one of them at all.
-    fn closure_param(&self, name: &str) -> Option<Option<Ty>> {
-        self.closure_params
-            .borrow()
-            .iter()
-            .rev()
-            .find_map(|frame| {
-                frame
-                    .iter()
-                    .find(|(param, _)| param == name)
-                    .map(|(_, ty)| ty.clone())
-            })
     }
 
     /// The type of a block's tail expression, which is the block's own type.
@@ -188,57 +160,6 @@ impl<'a> TypeContext<'a> {
         Some(Ty::Named {
             id,
             args: vec![want.clone(), Ty::Infer],
-        })
-    }
-
-    /// The callable type a closure has: `impl Fn(A, B) -> R` with what the
-    /// signature settled, which is the type Rust gives a closure everywhere a
-    /// closure's type is asked for.
-    ///
-    /// A parameter or a result the engine could not settle is refused rather
-    /// than filled with a guess, because a wrong `Fn` bound would pick a wrong
-    /// impl at every call that takes this closure.
-    fn callable_type(
-        &self,
-        closure: &syn::ExprClosure,
-        sig: &super::closures::ClosureSig,
-    ) -> Result<Ty, Diag> {
-        let untyped = sig.untyped_params();
-        if !untyped.is_empty() {
-            return Err(self.refuse(
-                closure.span(),
-                format!(
-                    "this closure's parameter{} {} typed by nothing the engine can read: \
-                     neither an annotation on the closure nor the position it stands in says \
-                     what {} hold{}",
-                    if untyped.len() == 1 { " is" } else { "s are" },
-                    untyped
-                        .iter()
-                        .map(|n| format!("`{}`", n))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    if untyped.len() == 1 { "it" } else { "they" },
-                    if untyped.len() == 1 { "s" } else { "" },
-                ),
-            ));
-        }
-        let Some(id) = self.registry.system_type("std::ops::Fn") else {
-            return Err(self.refuse(closure.span(), "`Fn` is not declared"));
-        };
-        let inputs: Vec<Ty> = sig.params.iter().filter_map(|(_, ty)| ty.clone()).collect();
-        Ok(Ty::ImplTrait {
-            bounds: vec![TraitRef {
-                id,
-                args: vec![if inputs.is_empty() {
-                    Ty::Unit
-                } else {
-                    Ty::Tuple(inputs)
-                }],
-                bindings: vec![(
-                    "Output".to_string(),
-                    sig.ret.clone().unwrap_or(Ty::Unit),
-                )],
-            }],
         })
     }
 
@@ -386,7 +307,13 @@ impl<'a> TypeContext<'a> {
 
             syn::Expr::Struct(lit) => self.resolve_struct_literal(lit),
 
-            syn::Expr::Reference(r) => self.resolve_expr(&r.expr),
+            // `&x` IS a reference: erasing it here made every actual the
+            // engine reads lie about what the callee is handed, and a borrowed
+            // argument met a by-value parameter without a word.
+            syn::Expr::Reference(r) => Ok(Ty::Ref {
+                mutable: r.mutability.is_some(),
+                inner: Box::new(self.resolve_expr(&r.expr)?),
+            }),
 
             // `loop { .. break n; }` is an expression whose type is what its
             // `break`s carry; a `loop` with no such `break` never ends and has

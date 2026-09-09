@@ -224,6 +224,6 @@ export function Expr_fromRefT<T>(r: Ref<T>): Expr {
 }
 
 export function Expr_fromRefRefT<T>(r: Ref<T>): Expr {
-  return Expr.fromEntityId((r.id));
+  return Expr.fromRefEntityId((r.id));
 }
 

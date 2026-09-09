@@ -214,14 +214,10 @@ export function encodeTupleValuesWithKeySpec(values: Value[], keySpec: KeySpec):
       break;
     }
     const keypart = keySpec.keyparts[i];
-    try {
-      const _r0 = encodeComponentTyped(v, keypart.valueType, keypart.direction.isDesc());
-      if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
-      const bytes = _r0.unwrap();
-      out = new Uint8Array([...out, ...bytes]);
-    } finally {
-      keypart.drop();
-    }
+    const _r0 = encodeComponentTyped(v, keypart.valueType, keypart.direction.isDesc());
+    if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    const bytes = _r0.unwrap();
+    out = new Uint8Array([...out, ...bytes]);
   }
   return Result.Ok(out);
 }

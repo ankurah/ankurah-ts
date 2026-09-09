@@ -57,7 +57,15 @@ pub struct Contradiction {
     /// receiver's own type argument substituted in, so `xs.push("x")` on a
     /// `Vec<?0>` disagrees about `?0` even though neither side still names it.
     pub through: Option<Ty>,
+    /// Would Rust coerce here? It does where a value MEETS a declared type and
+    /// nowhere inside one, and the re-check at the end of the solve has to ask
+    /// the same question the site asked.
+    pub coerces: bool,
 }
+
+/// Which unknown at a site a refusal takes. One site can also carry an
+/// omitted type argument and a literal, and this index is clear of both.
+const REFUSAL: usize = usize::MAX;
 
 /// Every inference variable of one body, and what each stands for.
 ///
@@ -94,6 +102,10 @@ pub struct InferTable {
     /// width the engine fell back to is not a fact about the program, so a
     /// constraint it fails is the engine's own guess and says nothing.
     defaulted: HashSet<InferId>,
+    /// How many bindings a constraint asked of a SCRATCH copy of this table
+    /// would have made. The walk that writes a body asks against a copy, so
+    /// counting this table's own bindings cannot see a late answer; this can.
+    scratch_bindings: usize,
 }
 
 impl InferTable {
@@ -130,6 +142,19 @@ impl InferTable {
         InferId(self.bound.len() as u32 - 1)
     }
 
+    /// The unknown a refusal answers with: minted at the refusing site and
+    /// already standing for nothing.
+    ///
+    /// A refusal is the engine's own gap, so it must contribute no type: what
+    /// it answers meets anything without binding, and every spelling path
+    /// reads it as unknown. Answering `()` instead made a later constraint
+    /// report the gap as the program's contradiction.
+    pub fn unresolvable_at_site(&mut self, line: usize, col: usize) -> InferId {
+        let id = self.at_site(line, col, REFUSAL);
+        self.poisoned.insert(id);
+        id
+    }
+
     /// The unknown standing at one written site — a source position and, where
     /// the site carries several, which one. Minted the first time and the same
     /// one after.
@@ -159,6 +184,25 @@ impl InferTable {
             .count()
     }
 
+    /// Note that a constraint asked of a scratch copy bound something the
+    /// solve had not. Nothing is bound here: the count is what the walk that
+    /// writes a body is held to.
+    pub fn note_scratch_bindings(&mut self, made: usize) {
+        self.scratch_bindings += made;
+    }
+
+    /// How many such bindings have been noted.
+    pub fn scratch_bindings(&self) -> usize {
+        self.scratch_bindings
+    }
+
+    /// How many variables stand for a type. Minting an unknown that stands for
+    /// nothing is not a binding, so this is what the walk that writes a body is
+    /// held to.
+    pub fn bindings_made(&self) -> usize {
+        self.bound.iter().filter(|b| b.is_some()).count()
+    }
+
     /// What this variable stands for, one step, without following further. A
     /// poisoned variable stands for nothing: the constraint that touched it had
     /// no solution, and the type it held before is not an answer.
@@ -177,6 +221,13 @@ impl InferTable {
         collect_vars(ty, &mut found);
         collect_vars(&self.resolve(ty), &mut found);
         self.poisoned.extend(found);
+    }
+
+    /// Does this type name an unknown that stands for nothing?
+    fn mentions_poisoned(&self, ty: &Ty) -> bool {
+        let mut found = Vec::new();
+        collect_vars(ty, &mut found);
+        found.iter().any(|id| self.poisoned.contains(id))
     }
 
     /// Does this type stand on a width the fallback chose rather than the body?
@@ -347,6 +398,12 @@ impl InferTable {
         // Through the table: `a = b` then `b = Vec<a>` mentions `a` only once
         // `b` is followed, and binding it would make `resolve` recurse forever.
         let ty = &self.resolve(ty);
+        // Neither does anything bind TO one: a type naming an unknown that
+        // stands for nothing is not an answer, and binding it would spread
+        // that gap to every variable the constraint reaches.
+        if self.mentions_poisoned(ty) {
+            return Ok(());
+        }
         if ty.mentions_var(var) {
             return Err(Mismatch::VarOccurs {
                 var,

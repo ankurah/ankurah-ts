@@ -745,13 +745,9 @@ export class ResultSetIter<E extends View & Clone> extends Struct {
     try {
       if (this.index < state.value.order.length) {
         const entity = state.value.order[this.index].entity;
-        try {
-          const view = E.fromEntity(entity.clone());
-          this.index = checkedAdd(this.index, 1, 'usize');
-          return view;
-        } finally {
-          entity.drop();
-        }
+        const view = E.fromEntity(entity.clone());
+        this.index = checkedAdd(this.index, 1, 'usize');
+        return view;
       } else {
         return null;
       }

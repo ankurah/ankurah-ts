@@ -80,7 +80,7 @@ export class TypeResolver extends Struct {
       let _moved0 = false;
       try {
         {
-          const value = Value.fromAstLiteral((lit));
+          const value = Value.fromRefAstLiteral((lit));
           try {
             const _v1 = Value_castTo(value, target);
             if (_v1.isOk()) {

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/await_postfix/src/input.rs
-import { Struct, invokeRef, Invocable, checkedMul } from '@ankurah/base';
+import { Struct, invokeRef, Invocable, dropOwned, checkedMul } from '@ankurah/base';
 
 export class Holder extends Struct {
   readonly items: number[];
@@ -35,7 +35,12 @@ export async function tail(): Promise<number[]> {
 }
 
 export async function through(): Promise<number> {
-  return invokeRef(await getFunction(), 8);
+  const _t0 = await getFunction();
+  try {
+    return invokeRef(_t0, 8);
+  } finally {
+    dropOwned(_t0);
+  }
 }
 
 export async function width(): Promise<number> {

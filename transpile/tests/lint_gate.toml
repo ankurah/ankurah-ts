@@ -258,7 +258,7 @@ repeated = [
   "lineage.ts:385: TClock_dispatch_members() × 2",
   "lineage.ts:428: TClock_dispatch_members() × 2",
   "lineage.ts:431: TClock_dispatch_members() × 2",
-  "peer_subscription/client_relay.ts:363: _v.is() × 2",
+  "peer_subscription/client_relay.ts:359: _v.is() × 2",
   "property/traits.ts:39: debugString() × 2",
   "reactor.test.ts:85: debugString() × 2",
   "reactor/fetch_gap.test.ts:108: OrderByItem() × 2",
@@ -270,7 +270,7 @@ repeated = [
   "reactor/fetch_gap.ts:195: Expr() × 2",
   "reactor/property_path.ts:77: keyHash() × 2",
   "reactor/property_path.ts:93: debugString() × 2",
-  "reactor/subscription_state.ts:420: this.deref() × 2",
+  "reactor/subscription_state.ts:411: this.deref() × 2",
   "reactor/update.ts:51: derivedClone() × 2",
   "resultset.ts:429: Some() × 2",
   "resultset.ts:429: String() × 2",
@@ -386,7 +386,7 @@ undefined = [
   "no-unreachable Unreachable code. × 1",
 ]
 repeated = [
-  "planner.ts:1357: operator.is() × 5",
+  "planner.ts:1351: operator.is() × 5",
   "sorting.test.ts:255: TestItem.int() × 3",
   "sorting.test.ts:275: TestItem.int() × 3",
   "sorting.test.ts:295: TestItem.mixed() × 4",
@@ -447,7 +447,7 @@ undefined = [
   "no-undef webSys × 11",
 ]
 repeated = [
-  "collection.ts:866: Expr() × 2",
+  "collection.ts:862: Expr() × 2",
   "planner_integration.test.ts:100: Value() × 2",
   "planner_integration.test.ts:12: IndexKeyPart.asc() × 3",
   "planner_integration.test.ts:12: ValueType() × 3",

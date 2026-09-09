@@ -258,3 +258,54 @@ fn a_constructor_takes_its_type_argument_from_the_closure_handed_to_it() {
         c.named("lib.rs", "Calculated", vec![Ty::Prim(Prim::Usize)])
     );
 }
+
+#[test]
+fn a_body_the_engine_cannot_type_makes_the_closure_answer_nothing() {
+    // A refusal is the engine's own gap, and `()` would be an answer: the
+    // constructor below it would hold a unit and every use of what it holds
+    // would be typed against one.
+    let c = Fixture::build(&[("lib.rs", "pub struct S;")]);
+    let mut cx = c.context("lib.rs", None);
+    cx.push_fn(vec![]);
+    let Ty::ImplTrait { bounds } = cx.resolve_expr(&expr("|| nowhere.read()")).unwrap() else {
+        panic!("a closure has a callable type")
+    };
+    let (_, output) = bounds[0]
+        .bindings
+        .iter()
+        .find(|(name, _)| name == "Output")
+        .expect("a callable says what it answers");
+    assert!(matches!(output, Ty::Var(_)), "{output:?}");
+    assert_eq!(cx.solved(output), *output, "it stands for nothing");
+}
+
+#[test]
+fn a_closure_answers_from_inside_the_block_that_prepared_its_captures() {
+    // `Calc::make({ let reader = source.reader(); move || reader.get() })` says
+    // what it holds only from inside the block: at the call, `reader` names
+    // nothing and the closure's body has no type.
+    let c = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Source;\npub struct Reader;\n\
+         impl Source {\n    pub fn reader(&self) -> Reader { Reader }\n}\n\
+         impl Reader {\n    pub fn get(&self) -> u64 { 1 }\n}\n\
+         pub struct Calc<T> {\n    pub value: T,\n}\n\
+         impl<T> Calc<T> {\n    \
+             pub fn make<F: Fn() -> T>(compute: F) -> Calc<T> {\n        \
+                 Calc { value: compute() }\n    }\n}",
+    )]);
+    let mut cx = c.context("lib.rs", None);
+    cx.push_fn(vec![]);
+    cx.scopes.bind("source".to_string(), c.named("lib.rs", "Source", vec![]));
+    let block: syn::Block = syn::parse_str(
+        "{ let held = Calc::make({ let reader = source.reader(); move || reader.get() }); held }",
+    )
+    .unwrap();
+    cx.collect_constraints(&block, None);
+    let syn::Stmt::Local(local) = &block.stmts[0] else { panic!("not a let") };
+    let built = cx.resolve_expr(&local.init.as_ref().unwrap().expr).unwrap();
+    assert_eq!(
+        cx.solved(&built),
+        c.named("lib.rs", "Calc", vec![Ty::Prim(Prim::U64)])
+    );
+}

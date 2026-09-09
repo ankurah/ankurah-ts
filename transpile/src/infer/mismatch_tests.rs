@@ -177,3 +177,94 @@ fn a_const_written_inside_a_body_types_the_names_below_it() {
         Ty::Prim(Prim::Usize)
     );
 }
+
+#[test]
+fn two_declared_reference_layers_over_a_value_carrying_none_disagree() {
+    // One declared `&` over a value carrying none is the borrow the engine
+    // reads that value through. Two is a type the caller never wrote, and Rust
+    // rejects the call.
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Sink;\n\
+         impl Sink {\n    pub fn take(&self, value: &&u8) -> usize { 0 }\n}\n\
+         pub fn go(sink: &Sink, n: u8) -> usize { sink.take(n) }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert_eq!(contradictions(&c).len(), 1, "{:?}", c.messages());
+}
+
+#[test]
+fn one_declared_reference_layer_is_the_borrow_the_engine_reads_through() {
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Sink;\n\
+         impl Sink {\n    pub fn take(&self, value: &u8) -> usize { 0 }\n}\n\
+         pub fn go(sink: &Sink, n: u8) -> usize { sink.take(n) }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert!(contradictions(&c).is_empty(), "{:?}", c.messages());
+}
+
+#[test]
+fn a_deref_inside_a_type_argument_is_not_a_coercion() {
+    // Rust coerces where a value meets a declared type and nowhere inside one:
+    // a `Box<Expr>` stands where an `Expr` is declared, and a `Vec<Box<Expr>>`
+    // does not stand where a `Vec<Expr>` is.
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Expr;\n\
+         pub fn take(values: Vec<Expr>) -> usize { values.len() }\n\
+         pub fn go(boxed: Vec<Box<Expr>>) -> usize { take(boxed) }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert_eq!(contradictions(&c).len(), 1, "{:?}", c.messages());
+}
+
+#[test]
+fn a_deref_where_a_value_meets_a_declared_type_is_one() {
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Expr;\n\
+         pub fn take(value: Expr) -> usize { 0 }\n\
+         pub fn go(boxed: Box<Expr>) -> usize { take(boxed) }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert!(contradictions(&c).is_empty(), "{:?}", c.messages());
+}
+
+#[test]
+fn a_sequence_whose_elements_differ_is_a_contradiction() {
+    // A `Vec<T>` stands where a slice of `T` is declared, so what the two say
+    // about each other is their ELEMENT — and an element that cannot be the
+    // one declared is as much a contradiction as the whole would be.
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Tag;\n\
+         pub fn take(values: &[u32]) -> usize { values.len() }\n\
+         pub fn go(tags: Vec<Tag>) -> usize { take(&tags) }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert_eq!(contradictions(&c).len(), 1, "{:?}", c.messages());
+}
+
+#[test]
+fn a_box_is_a_sequence_only_of_what_it_boxes_a_slice_of() {
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub fn take(values: &[u8]) -> usize { values.len() }\n\
+         pub fn boxed(one: Box<u8>) -> usize { take(&one) }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert_eq!(contradictions(&c).len(), 1, "{:?}", c.messages());
+}
+
+#[test]
+fn a_boxed_slice_stands_where_a_slice_is_declared() {
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub fn take(values: &[u8]) -> usize { values.len() }\n\
+         pub fn boxed(many: Box<[u8]>) -> usize { take(&many) }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert!(contradictions(&c).is_empty(), "{:?}", c.messages());
+}

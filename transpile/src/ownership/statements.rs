@@ -318,6 +318,11 @@ impl<'a> BodyTranslator<'a> {
         if drops == ownership::Drops::Guard {
             return text;
         }
+        // A value with no drop glue is nothing to release, whatever shape the
+        // runtime writes the call as: `counter.store(3, ..);` answers `()`.
+        if drops == ownership::Drops::Nothing {
+            return text;
+        }
         if self.rewritten_by_runtime(expr) {
             self.fallback(
                 syn::spanned::Spanned::span(expr),

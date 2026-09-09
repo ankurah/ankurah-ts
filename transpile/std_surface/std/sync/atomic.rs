@@ -47,6 +47,9 @@ impl AtomicUsize {
     pub fn fetch_sub(&self, val: usize, order: Ordering) -> usize { todo!() }
     pub fn fetch_max(&self, val: usize, order: Ordering) -> usize { todo!() }
     pub fn fetch_min(&self, val: usize, order: Ordering) -> usize { todo!() }
+    pub fn fetch_and(&self, val: usize, order: Ordering) -> usize { todo!() }
+    pub fn fetch_or(&self, val: usize, order: Ordering) -> usize { todo!() }
+    pub fn fetch_xor(&self, val: usize, order: Ordering) -> usize { todo!() }
     pub fn compare_exchange(&self, current: usize, new: usize, success: Ordering, failure: Ordering) -> Result<usize, usize> { todo!() }
     pub fn compare_exchange_weak(&self, current: usize, new: usize, success: Ordering, failure: Ordering) -> Result<usize, usize> { todo!() }
     pub fn into_inner(self) -> usize { todo!() }
@@ -65,7 +68,13 @@ impl AtomicU32 {
     pub fn swap(&self, val: u32, order: Ordering) -> u32 { todo!() }
     pub fn fetch_add(&self, val: u32, order: Ordering) -> u32 { todo!() }
     pub fn fetch_sub(&self, val: u32, order: Ordering) -> u32 { todo!() }
+    pub fn fetch_and(&self, val: u32, order: Ordering) -> u32 { todo!() }
+    pub fn fetch_or(&self, val: u32, order: Ordering) -> u32 { todo!() }
+    pub fn fetch_xor(&self, val: u32, order: Ordering) -> u32 { todo!() }
+    pub fn fetch_max(&self, val: u32, order: Ordering) -> u32 { todo!() }
+    pub fn fetch_min(&self, val: u32, order: Ordering) -> u32 { todo!() }
     pub fn compare_exchange(&self, current: u32, new: u32, success: Ordering, failure: Ordering) -> Result<u32, u32> { todo!() }
+    pub fn compare_exchange_weak(&self, current: u32, new: u32, success: Ordering, failure: Ordering) -> Result<u32, u32> { todo!() }
     pub fn into_inner(self) -> u32 { todo!() }
 }
 
@@ -81,7 +90,13 @@ impl AtomicU64 {
     pub fn swap(&self, val: u64, order: Ordering) -> u64 { todo!() }
     pub fn fetch_add(&self, val: u64, order: Ordering) -> u64 { todo!() }
     pub fn fetch_sub(&self, val: u64, order: Ordering) -> u64 { todo!() }
+    pub fn fetch_and(&self, val: u64, order: Ordering) -> u64 { todo!() }
+    pub fn fetch_or(&self, val: u64, order: Ordering) -> u64 { todo!() }
+    pub fn fetch_xor(&self, val: u64, order: Ordering) -> u64 { todo!() }
+    pub fn fetch_max(&self, val: u64, order: Ordering) -> u64 { todo!() }
+    pub fn fetch_min(&self, val: u64, order: Ordering) -> u64 { todo!() }
     pub fn compare_exchange(&self, current: u64, new: u64, success: Ordering, failure: Ordering) -> Result<u64, u64> { todo!() }
+    pub fn compare_exchange_weak(&self, current: u64, new: u64, success: Ordering, failure: Ordering) -> Result<u64, u64> { todo!() }
     pub fn into_inner(self) -> u64 { todo!() }
 }
 
@@ -96,6 +111,8 @@ impl AtomicI64 {
     pub fn store(&self, val: i64, order: Ordering) { todo!() }
     pub fn fetch_add(&self, val: i64, order: Ordering) -> i64 { todo!() }
     pub fn fetch_sub(&self, val: i64, order: Ordering) -> i64 { todo!() }
+    pub fn swap(&self, val: i64, order: Ordering) -> i64 { todo!() }
+    pub fn compare_exchange(&self, current: i64, new: i64, success: Ordering, failure: Ordering) -> Result<i64, i64> { todo!() }
     pub fn into_inner(self) -> i64 { todo!() }
 }
 

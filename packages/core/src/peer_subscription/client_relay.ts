@@ -144,64 +144,60 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
               const state = _v;
               {
                 const oldContent = state.content;
+                let _moved3 = false;
+                const _b2 = oldContent.value.collectionId.clone();
                 try {
-                  let _moved3 = false;
-                  const _b2 = oldContent.value.collectionId.clone();
+                  let _moved5 = false;
+                  const _b4 = selection.clone();
                   try {
-                    let _moved5 = false;
-                    const _b4 = selection.clone();
-                    try {
-                      const _b6 = oldContent.value.contextData.clone();
-                      const _a1 = Arc.new(new Content(oldContent.value.queryId, _b2, _b4, _b6, version));
-                      state.content.drop();
-                      _moved3 = true;
-                      _moved5 = true;
-                      state.content = _a1;
-                    } finally {
-                      if (!_moved5) dropOwned(_b4);
-                    }
+                    const _b6 = oldContent.value.contextData.clone();
+                    const _a1 = Arc.new(new Content(oldContent.value.queryId, _b2, _b4, _b6, version));
+                    state.content.drop();
+                    _moved3 = true;
+                    _moved5 = true;
+                    state.content = _a1;
                   } finally {
-                    if (!_moved3) dropOwned(_b2);
+                    if (!_moved5) dropOwned(_b4);
                   }
-                  const _m8 = () => {
-                    const _a7 = new Status('PendingRemote', {});
-                    state.status.drop();
-                    state.status = _a7;
-                    return null;
-                  };
-                  return state.status.match<any>({
-                    Established: (v) => {
-                      const peerId = v._0;
-                      const _oldVersion = v._1;
-                      const _a9 = new Status('Requested', { _0: peerId, _1: version });
-                      state.status.drop();
-                      state.status = _a9;
-                      let _moved11 = false;
-                      const _b10 = state.content.value.collectionId.clone();
-                      try {
-                        const _b12 = state.content.value.contextData.clone();
-                        _moved11 = true;
-                        return [peerId, _b10, _b12];
-                      } finally {
-                        if (!_moved11) dropOwned(_b10);
-                      }
-                    },
-                    PendingRemote: () => {
-                      return _m8();
-                    },
-                    Requested: () => {
-                      return _m8();
-                    },
-                    PendingUpdate: () => {
-                      return _m8();
-                    },
-                    Failed: () => {
-                      return _m8();
-                    },
-                  });
                 } finally {
-                  oldContent.drop();
+                  if (!_moved3) dropOwned(_b2);
                 }
+                const _m8 = () => {
+                  const _a7 = new Status('PendingRemote', {});
+                  state.status.drop();
+                  state.status = _a7;
+                  return null;
+                };
+                return state.status.match<any>({
+                  Established: (v) => {
+                    const peerId = v._0;
+                    const _oldVersion = v._1;
+                    const _a9 = new Status('Requested', { _0: peerId, _1: version });
+                    state.status.drop();
+                    state.status = _a9;
+                    let _moved11 = false;
+                    const _b10 = state.content.value.collectionId.clone();
+                    try {
+                      const _b12 = state.content.value.contextData.clone();
+                      _moved11 = true;
+                      return [peerId, _b10, _b12];
+                    } finally {
+                      if (!_moved11) dropOwned(_b10);
+                    }
+                  },
+                  PendingRemote: () => {
+                    return _m8();
+                  },
+                  Requested: () => {
+                    return _m8();
+                  },
+                  PendingUpdate: () => {
+                    return _m8();
+                  },
+                  Failed: () => {
+                    return _m8();
+                  },
+                });
               }
             } else {
               return { $jump: 'return', $value: Result.Err(AnyhowError.msg(`Predicate ${queryId} not found`)) };

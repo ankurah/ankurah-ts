@@ -57,7 +57,10 @@ impl TypeContext<'_> {
         expected: Option<&Ty>,
     ) -> Option<Vec<Option<Ty>>> {
         let syn::Expr::Path(path) = &*call.func else {
-            return None;
+            // A callee that is not a name is a value, and what it can be called
+            // with is what its callable shape says: `(make_box())(5)` takes the
+            // `u64` the `Box<dyn Fn(u64) -> u64>` declares.
+            return self.indirect_argument_types(&call.func);
         };
         if let Some(fields) = self.variant_argument_types(path, expected) {
             return Some(fields);
@@ -107,6 +110,14 @@ impl TypeContext<'_> {
                 })
                 .collect(),
         )
+    }
+
+    /// What a value standing where a function is called takes, read off the
+    /// callable it holds.
+    fn indirect_argument_types(&self, callee: &syn::Expr) -> Option<Vec<Option<Ty>>> {
+        let ty = self.actual_of(callee)?;
+        let shape = expected::fn_shape(self.registry, &ty, &self.param_bounds)?;
+        Some(shape.inputs.into_iter().map(Some).collect())
     }
 
     /// What a TUPLE STRUCT's constructor takes: its fields, in order.

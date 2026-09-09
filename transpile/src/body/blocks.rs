@@ -49,14 +49,17 @@ impl BodyTranslator<'_> {
                 .collect_constraints(block, self.fn_return.as_ref());
         }
         let solved = self.bound_unknowns();
+        let late = self.scratch_bindings();
         let owned = self.claim_params(block, params);
         let body = self.translate_block_stmts(block);
         // The table this walk read is the table the solve left. A binding made
         // while the body is written reaches the statements below it and not the
-        // ones above, which is one local with two answers.
+        // ones above, which is one local with two answers. What the walk WOULD
+        // have bound counts too: it asks against a scratch copy, so the table's
+        // own count cannot move and proves nothing on its own.
         assert_eq!(
-            self.bound_unknowns(),
-            solved,
+            (self.bound_unknowns(), self.scratch_bindings()),
+            (solved, late),
             "writing this body bound an unknown the solve had not"
         );
         self.pop_scope();
@@ -77,6 +80,13 @@ impl BodyTranslator<'_> {
     fn bound_unknowns(&self) -> usize {
         match &self.types {
             Some(tc) => tc.borrow().bound_unknowns(),
+            None => 0,
+        }
+    }
+
+    fn scratch_bindings(&self) -> usize {
+        match &self.types {
+            Some(tc) => tc.borrow().scratch_bindings(),
             None => 0,
         }
     }
@@ -453,44 +463,7 @@ impl BodyTranslator<'_> {
             }
         }
     }
-
 }
-
-#[cfg(test)]
-mod formatter_tests {
-    use crate::testing::Fixture;
-
-    /// Every `write!` inside a `Display` APPENDS to what the formatter has
-    /// composed, in each of the forms a source writes it. `return write!(..)`
-    /// was read as an ordinary `return`, so the string it wrote became the whole
-    /// answer and everything written before it was discarded: `Size(200)`
-    /// printed as `big)` where Rust prints `Size(big)`.
-    #[test]
-    fn a_returned_write_appends_and_then_answers_the_accumulator() {
-        let mut f = Fixture::build(&[(
-            "lib.rs",
-            "use std::fmt;\n\
-             pub struct Size(pub u32);\n\
-             impl fmt::Display for Size {\n\
-               fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n\
-                 write!(f, \"Size(\")?;\n\
-                 if self.0 > 100 {\n\
-                   return write!(f, \"big)\");\n\
-                 }\n\
-                 write!(f, \"{})\", self.0)\n\
-               }\n\
-             }",
-        )]);
-        let ts = f.emitted("lib.rs");
-        assert!(ts.contains("_result += 'big)';"), "the write appends:\n{}", ts);
-        assert!(!ts.contains("return 'big)';"), "and does not replace:\n{}", ts);
-        // The early exit still leaves, with what the formatter has composed.
-        let early = ts.find("_result += 'big)';").expect("the append");
-        let answer = ts[early..].find("return _result;").expect("and the answer after it");
-        assert!(answer < 40, "the return follows the append:\n{}", &ts[early..early + 80]);
-    }
-}
-
 
 /// Does this emitted statement leave the block it stands in?
 ///

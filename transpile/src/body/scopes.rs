@@ -406,6 +406,35 @@ impl<'a> BodyTranslator<'a> {
         Some(if once { "invoke" } else { "invokeRef" })
     }
 
+    /// What TypeScript writes between a callee and the callable inside it.
+    ///
+    /// `Arc<dyn Fn(..)>` keeps the closure in the Arc's own cell, and the
+    /// helper has to be handed what the cell holds: handed the Arc, it called
+    /// a value that is not a function.
+    pub(crate) fn accessors_to_the_callable(&self, callee: &syn::Expr) -> Vec<String> {
+        let Some(tc) = self.types.as_ref() else { return Vec::new() };
+        let Ok(ty) = self.quietly(|| self.resolve_expr_type(callee)) else {
+            return Vec::new();
+        };
+        let tc = tc.borrow();
+        let probe = tc.probe();
+        let (mut at, mut written) = (ty, Vec::new());
+        for _ in 0..8 {
+            if matches!(
+                at.peel_refs(),
+                crate::ty::Ty::Param(_) | crate::ty::Ty::ImplTrait { .. } | crate::ty::Ty::Dyn { .. }
+            ) {
+                break;
+            }
+            let Some(step) = probe.deref_once(&at) else { break };
+            if let Some(accessor) = &step.accessor {
+                written.push(accessor.written());
+            }
+            at = step.to;
+        }
+        written
+    }
+
     /// Note that this body holds `name` in a runtime cell.
     pub(crate) fn hold_in_a_cell(&self, name: &str) {
         let mut boxed = self.boxed.borrow_mut();

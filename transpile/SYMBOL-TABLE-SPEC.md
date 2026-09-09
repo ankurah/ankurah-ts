@@ -783,8 +783,8 @@ The engine mints an unknown for each and lets the body bind it.
   DEFAULT gets a variable too, and the default is unified into it as the last
   step of the solve: `Slot<A, B = ()>` built as `Slot::new(1u8, thing)` reads
   `B` off the argument, as Rust does, and the default is what stands where the
-  body said nothing. Where the body says something else, the site says both
-  types and neither is chosen. Once a default has fallen into place a method
+  body said nothing. Where the body says something else the body wins and the
+  declaration's default is dropped. Once a default has fallen into place a method
   that could not resolve through an open unknown can, so the walk runs to a
   fixed point again after.
 - **Constraints come from the body, one source at a time.** A call's declared
@@ -793,8 +793,14 @@ The engine mints an unknown for each and lets the body bind it.
   sequence's item; a place and the value written into it; each `return`'s value
   and the function's tail; a struct literal's fields; a pattern against its
   scrutinee; `.await` projecting `Future::Output` where the impl table read it
-  through. A `let`'s annotation against its initialiser is NOT one of them: that
-  is still `fill_infer`'s one-position path and never reaches the table.
+  through; a `let`'s annotation against its initialiser; and the CALLABLE
+  position a closure stands in against what the closure's own body answers,
+  asked from inside the block that prepared the closure's captures, because at
+  the call those names are not in scope. A macro's arguments are tokens, so no
+  visitor reaches them and a macro written as a STATEMENT is not an expression
+  at all: the supported macros' arguments are parsed by the parser emission
+  uses and walked like any other expression, or the walk reads less of the body
+  than the emitter does.
 - **A constraint runs when EITHER side carries an unknown.** `let mut found =
   Vec::new(); fill(&mut found, n)` decides `found`'s element at a parameter
   whose own type is written out in full.
@@ -802,16 +808,34 @@ The engine mints an unknown for each and lets the body bind it.
   its bound in its own terms — `FnMut(Self::Item) -> B` — and a projection left
   standing types nothing inside the closure, so each parameter is normalised
   before the position is read.
-- **The value keeps every `&` it carries.** A borrow bound to a by-value
-  parameter is what that parameter holds: `picked.push(t)` over a `&Thing` makes
-  `picked` a `Vec<&Thing>`, and a collection of borrows releases nothing. A `&`
-  the DECLARED side has over a value carrying none is the borrow the engine
-  reads that value through — `self` inside `impl .. for Arc<Inner<T>>` is read
-  as the `Arc` itself — and is discounted; nothing is hidden by that, because
-  two types that disagree under the reference still refuse.
+- **The value keeps every `&` it carries.** `&x` IS a reference — reading it as
+  what `x` is made every actual the engine read lie about what the callee is
+  handed — and a borrow bound to a by-value parameter is what that parameter
+  holds: `picked.push(t)` over a `&Thing` makes `picked` a `Vec<&Thing>`, and a
+  collection of borrows releases nothing.
+- **How many references a value may have is Rust's rule, with one discount.**
+  The unification looks through ONE `&` the declared side has over a value
+  carrying none, because the scope holds some receivers without the borrow Rust
+  gives them — `self` inside `impl .. for Arc<Inner<T>>` is read as the `Arc`
+  itself. The DISAGREEMENT is judged by depth: a value carrying more references
+  than the declaration wants still meets it, which is Rust's deref coercion, and
+  a declaration carrying two more than the value does not.
 - **A slice and a sequence that derefs to it agree about their ELEMENT.**
   `&Vec<T>` stands where `&[T]` is declared, and the port writes both as one
-  array. Only where the structural walk has already refused.
+  array; a `Box` is such a sequence only of what it boxes a SLICE of, and a
+  slice beside something that is not a sequence at all disagrees. The element
+  comparison runs where the structural walk has already refused, and it reports
+  what it finds.
+- **Rust coerces where a value MEETS a declared type and nowhere inside one.**
+  An argument against its parameter, a `let` against its annotation, a return
+  against the declared type and a field against its declaration are coercion
+  sites, so `Box<Expr>` stands where `Expr` is declared; inside a type argument
+  nothing is coerced, so `Vec<Box<Expr>>` handed where `Vec<Expr>` is declared
+  is a contradiction.
+- **A type parameter the CALLEE owns never binds the caller's unknown.**
+  `notify_change<C>(changes: Vec<C>)` says `C` is one type per call it makes,
+  not one the caller's body can decide, and binding it left the caller holding a
+  name nothing in that file declares.
 - **A bound is a capability, not a type.** `impl Fn() -> T` and a closure are
   never the same type, and `impl IntoIterator<Item = F>` and a `Vec<Tag>` are
   never the same type; unifying the two says something false about both. A
@@ -826,11 +850,27 @@ The engine mints an unknown for each and lets the body bind it.
   call carrying it has read the bound. What the position requires is kept by the
   span the closure is written at, so the walk into the body types the parameters
   rather than leaving them standing for nothing.
-- **The constraint walk is QUIET.** It runs several times over one body, so
-  every report it makes it would make again; the sink is rewound when it ends
-  and the walk that WRITES the body says what it could not do, where it stands.
-  A contradiction is the exception in neither direction: it is reported by the
-  writing walk, at the site, exactly as every other refusal is.
+- **The constraint walk is QUIET, and it is the only one that reports a
+  contradiction.** It runs several times over one body, so every report it makes
+  it would make again; the sink is rewound when it ends, and the walk that
+  WRITES the body says what it could not do, where it stands. A contradiction is
+  the exception: the table keeps it, the end of the solve re-checks it against
+  the table the solve left, and it is filed once from there, past the rewind.
+  The writing walk does not report one — it types expressions the solve never
+  reached, with every fallback in place, so a disagreement it finds is its own
+  reading rather than the program's.
+- **A constraint with no solution is a durable result.** Every variable it
+  touched is POISONED — and so is what it was read THROUGH, because a method's
+  parameter is the receiver's own type argument substituted in — and a poisoned
+  variable answers as an unknown, so the local that held it takes the untyped
+  path rather than the type that happened to be bound first.
+- **A refusal contributes NO type.** What the engine could not work out answers
+  an unknown minted at the refusing site and already standing for nothing: no
+  constraint binds it, nothing binds TO a type that names one, and every
+  spelling path reads it as unknown. Answering `()` made every later constraint
+  source report the engine's own gap as the program's contradiction.
+- **A constraint is skipped outright where either side is `Ty::Never`**, which
+  stands at every type and so says nothing about the one the position wanted.
 - **A bound whose subject is an unsettled unknown is undecided, not refused.**
   `SubscriptionRelay::new()` reads as `SubscriptionRelay<?0, ?1>`, and the impl
   that carries its methods is written `impl<CD: ContextData, ..>`. No impl is
@@ -849,8 +889,13 @@ The engine mints an unknown for each and lets the body bind it.
   constraint that could not run before it run now. The walk repeats until a round
   binds nothing new; past one round per variable the table has stopped being
   monotone, and that is a diagnostic rather than a spin (as 4.8's depth limit is).
-- **Nothing is ever defaulted, except a default the DECLARATION wrote.** A
-  variable nothing bound is reported, not filled in. Where a type has to be
+- **Nothing is ever defaulted, except a default the DECLARATION wrote and the
+  width of an unsuffixed literal.** A variable nothing bound is reported, not
+  filled in. An unsuffixed literal mints a KINDED unknown — one only an integer,
+  or only a float, may bind — and takes `i32` or `f64` after the fixed point if
+  nothing stronger bound it, which is Rust's own `{integer}` / `{float}` rule
+  and the only width the engine chooses. A width the fallback chose is not
+  evidence: a constraint it fails is the engine disagreeing with its own guess. Where a type has to be
   SPELLED and still names a variable, the site writes exactly what it writes
   when there is no type at all, and `map_ty` refuses rather than inventing a
   spelling. A written parameter default is the one exception, and it is Rust's
@@ -859,10 +904,10 @@ The engine mints an unknown for each and lets the body bind it.
   made while the body is written reaches the statements below it and not the
   ones above, which is one local with two answers — a `let` reported as holding
   nothing the engine can name, and three statements below a release for what it
-  holds. The writing walk asks the same questions of a SCRATCH copy, so a site
-  whose two types cannot meet is still said where it stands while the table
-  stays as the solve left it, and `translate_fn_block` asserts the bound count
-  is unchanged when the last line is written.
+  holds. The writing walk asks its questions of a SCRATCH copy of the table, so
+  counting the table's own bindings could not see a late one: what a scratch
+  unification WOULD have bound is counted too, and `translate_fn_block` asserts
+  both counts unchanged when the last line is written.
 - **A tuple-element annotation is written where TypeScript's own inference
   disagrees.** `let xs = []` grows by what is pushed into it, and TypeScript
   reads a pushed `[a, b]` as an array of `a | b` rather than as the pair; it
@@ -873,7 +918,7 @@ The engine mints an unknown for each and lets the body bind it.
 - **Ownership reads types and does not take part.** `drops_of` answers
   `Drops::Unknown` for an unresolved variable exactly as it does for `Ty::Infer`,
   and every ownership question is asked in the second walk, where the table is
-  already solved — which the assertion above is what makes true.
+  already solved — which the assertion above is what holds it to.
 
 ### 4.9 Scopes and names
 

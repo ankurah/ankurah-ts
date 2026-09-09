@@ -1191,69 +1191,63 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
 
   async generateEntityDelta(knownMap: HashMap<EntityId, Clock>, entityState: Attested<EntityState>, storageCollection: StorageCollectionWrapper): Promise<Result<EntityDelta | null, Error>> {
     const { payload: { entityId, collection, state }, attestations } = entityState;
-    let _moved0 = false;
     const currentHead = state.head;
-    try {
-      {
-        const _v4 = knownMap.get(entityId);
-        if (_v4 != null) {
-          const knownHead = _v4;
-          if (knownHead.equals(currentHead)) {
-            return Result.Ok(null);
-          }
-          _moved0 = true;
-          const _v = await this.collectEventBridge(storageCollection, knownHead, currentHead);
-          if (_v.isOk()) {
-            const _v1 = _v.unwrap();
-            {
-              const attestedEvents = _v1;
-              let _g2;
-              try {
-                _g2 = !(attestedEvents.length === 0);
-              } catch (_e) {
-                if (_e instanceof OwnershipFatal || _e instanceof UnsupportedShape) throw _e;
-                dropOwned(attestedEvents);
-                throw _e;
-              }
-              if (_g2) {
-                let _moved1 = false;
-                try {
-                  {
-                    _moved1 = true;
-                    const eventFragments = [...attestedEvents].map((e) => e);
-                    return Result.Ok(new EntityDelta(entityId, collection, new DeltaContent('EventBridge', { events: eventFragments })));
-                  }
-                } finally {
-                  if (!_moved1) dropOwned(attestedEvents);
-                }
-              }
+    {
+      const _v4 = knownMap.get(entityId);
+      if (_v4 != null) {
+        const knownHead = _v4;
+        if (knownHead.equals(currentHead)) {
+          return Result.Ok(null);
+        }
+        const _v = await this.collectEventBridge(storageCollection, knownHead, currentHead);
+        if (_v.isOk()) {
+          const _v1 = _v.unwrap();
+          {
+            const attestedEvents = _v1;
+            let _g1;
+            try {
+              _g1 = !(attestedEvents.length === 0);
+            } catch (_e) {
+              if (_e instanceof OwnershipFatal || _e instanceof UnsupportedShape) throw _e;
+              dropOwned(attestedEvents);
+              throw _e;
             }
-            {
-              const _v2 = _v1;
+            if (_g1) {
+              let _moved0 = false;
               try {
                 {
+                  _moved0 = true;
+                  const eventFragments = [...attestedEvents].map((e) => e);
+                  return Result.Ok(new EntityDelta(entityId, collection, new DeltaContent('EventBridge', { events: eventFragments })));
                 }
               } finally {
-                dropOwned(_v2);
+                if (!_moved0) dropOwned(attestedEvents);
               }
             }
-          } else {
-            const _v3 = _v.unwrapErr();
-            {
+          }
+          {
+            const _v2 = _v1;
+            try {
+              {
+              }
+            } finally {
+              dropOwned(_v2);
             }
+          }
+        } else {
+          const _v3 = _v.unwrapErr();
+          {
           }
         }
       }
-      let _moved3 = false;
-      const stateFragment = new StateFragment(state, attestations);
-      try {
-        _moved3 = true;
-        return Result.Ok(new EntityDelta(entityId, collection, new DeltaContent('StateSnapshot', { state: stateFragment })));
-      } finally {
-        if (!_moved3) stateFragment.drop();
-      }
+    }
+    let _moved2 = false;
+    const stateFragment = new StateFragment(state, attestations);
+    try {
+      _moved2 = true;
+      return Result.Ok(new EntityDelta(entityId, collection, new DeltaContent('StateSnapshot', { state: stateFragment })));
     } finally {
-      if (!_moved0) currentHead.drop();
+      if (!_moved2) stateFragment.drop();
     }
   }
 

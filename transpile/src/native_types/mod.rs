@@ -78,6 +78,15 @@ pub(crate) const ATOMIC_WRITES: [&str; 13] = [
 /// An atomic is a number or a boolean here, and an accessor that reaches one
 /// inside a holder hands out a copy: the write lands on the copy and is lost.
 /// Until the runtime has a cell a holder can carry, such a call is a hole.
+/// Is this one of the atomics the port writes as the value it holds?
+///
+/// Such a value is a PLACE a shared reference writes, so the binding that holds
+/// one cannot be a `const` and the field that holds one cannot be `readonly`.
+pub(crate) fn is_an_atomic(reg: &TypeRegistry, ty: &Ty) -> bool {
+    let Some(id) = ty.id() else { return false };
+    reg.name_of(id).starts_with("Atomic")
+}
+
 pub(crate) fn writes_through_the_holder(reg: &TypeRegistry, method: &str, target: &Ty) -> bool {
     ATOMIC_WRITES.contains(&method)
         && crate::is_value_spelling(&crate::name_map::map_ty(reg, target))

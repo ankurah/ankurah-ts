@@ -326,6 +326,29 @@ pub fn vec_macro_elements(mac: &syn::Macro) -> Vec<Expr> {
     parse_exprs_from_tokens(&mac.tokens).unwrap_or_default()
 }
 
+/// The argument expressions of a macro this port supports, for the walk that
+/// types a body.
+///
+/// The port expands no macro, but the emitter parses these tokens and types
+/// what it finds there. A walk that does not see them types the body less
+/// than the emitter does, and a local a macro argument decides stays unknown.
+pub fn macro_argument_exprs(mac: &syn::Macro) -> Vec<Expr> {
+    let name = mac
+        .path
+        .segments
+        .last()
+        .map(|s| s.ident.to_string())
+        .unwrap_or_default();
+    match name.as_str() {
+        "select" => select_futures(&mac.tokens),
+        "vec" => vec_macro_elements(mac),
+        "format" | "println" | "eprintln" | "write" | "writeln" | "panic" | "unreachable"
+        | "assert" | "assert_eq" | "assert_ne" | "debug_assert" | "debug_assert_eq"
+        | "debug_assert_ne" | "matches" => parse_exprs_from_tokens(&mac.tokens).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
 fn parse_exprs_from_tokens(tokens: &TokenStream) -> Result<Vec<Expr>, syn::Error> {
     struct ExprList(Vec<Expr>);
     impl Parse for ExprList {

@@ -14,7 +14,15 @@ export class CallbackObserver extends Struct implements Observer {
   }
 
   static new<F extends Invocable<[], void>>(callback: Arc<F>): CallbackObserver {
-    return new CallbackObserver(Arc.new(new Inner(new OwnedClosure([callback], () => callback()), new RwLock(new HashMap<BroadcastId, SubscriptionEntry>()))));
+    let _moved1 = false;
+    const _b0 = new OwnedClosure([callback], () => callback());
+    try {
+      const _b2 = new RwLock(new HashMap<BroadcastId, SubscriptionEntry>());
+      _moved1 = true;
+      return new CallbackObserver(Arc.new(new Inner(_b0, _b2)));
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   }
 
   trigger(): void {

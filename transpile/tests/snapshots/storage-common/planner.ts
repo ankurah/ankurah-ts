@@ -516,106 +516,100 @@ export class Planner extends Struct {
       const _r1 = inequalities.get(inequalityField);
       if (_r1 == null) return null;
       const inequalityValues = _r1;
-      let _moved2 = false;
       const firstInequalityValue = inequalityValues[0][1];
+      indexKeyparts.push(IndexKeyPart.ascPath(inequalityField, ValueType.of(firstInequalityValue)));
+      let _moved2 = false;
+      const bounds = this.buildBounds(equalities, [inequalityField, inequalityValues], indexKeyparts);
       try {
-        _moved2 = true;
-        indexKeyparts.push(IndexKeyPart.ascPath(inequalityField, ValueType.of(firstInequalityValue)));
-        let _moved3 = false;
-        const bounds = this.buildBounds(equalities, [inequalityField, inequalityValues], indexKeyparts);
-        try {
-          const _m5 = (() => {
-            const _v = bounds;
-            if (_v != null) {
-              const bounds = _v;
-              let _moved4 = false;
-              try {
-                {
-                  if (this.isEmptyBounds(bounds)) {
-                    return { $jump: 'return', $value: new Plan('EmptyScan', {}) };
-                  }
-                  _moved4 = true;
-                  return bounds;
-                }
-              } finally {
-                if (!_moved4) bounds.drop();
-              }
-            } else {
-              return { $jump: 'return', $value: new Plan('EmptyScan', {}) };
-            }
-          })();
-          if ((_m5 as any)?.$jump === 'return') return (_m5 as any).$value;
-          _moved3 = true;
-          let _moved6 = false;
-          const bounds_1 = (_m5 as any);
-          try {
-            let _moved7 = false;
-            const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, inequalityField);
+        const _m4 = (() => {
+          const _v = bounds;
+          if (_v != null) {
+            const bounds = _v;
+            let _moved3 = false;
             try {
-              let _moved10 = false;
-              const orderBySpill = (() => {
-                {
-                  const _v1 = orderBy;
-                  if (_v1 != null) {
-                    const orderByItems = _v1;
-                    const coveredFields = HashSet.from([...[...equalities].map(([f, ]) => f), ...once(inequalityField)]);
-                    let _moved8 = false;
-                    let presort = [];
-                    try {
-                      let _moved9 = false;
-                      let spill = [];
-                      try {
-                        for (const item of orderByItems) {
-                          if (item.path.isSimple()) {
-                            const name = item.path.first();
-                            if (coveredFields.has(name)) {
-                              presort.push(item.clone());
-                            } else {
-                              spill.push(item.clone());
-                            }
-                          }
-                        }
-                        _moved8 = true;
-                        _moved9 = true;
-                        return OrderByComponents.new(presort, spill);
-                      } finally {
-                        if (!_moved9) dropOwned(spill);
-                      }
-                    } finally {
-                      if (!_moved8) dropOwned(presort);
-                    }
-                  } else {
-                  return OrderByComponents.default();
+              {
+                if (this.isEmptyBounds(bounds)) {
+                  return { $jump: 'return', $value: new Plan('EmptyScan', {}) };
                 }
-                }
-              })();
-              try {
-                _moved0 = true;
-                let _moved11 = false;
-                const indexSpec = KeySpec.new(indexKeyparts);
-                try {
-                  _moved11 = true;
-                  _moved6 = true;
-                  _moved7 = true;
-                  _moved10 = true;
-                  return new Plan('Index', { indexSpec: indexSpec, scanDirection: new ScanDirection('Forward', {}), bounds: bounds_1, remainingPredicate: remainingPredicate, orderBySpill: orderBySpill });
-                } finally {
-                  if (!_moved11) indexSpec.drop();
-                }
-              } finally {
-                if (!_moved10) orderBySpill.drop();
+                _moved3 = true;
+                return bounds;
               }
             } finally {
-              if (!_moved7) remainingPredicate.drop();
+              if (!_moved3) bounds.drop();
+            }
+          } else {
+            return { $jump: 'return', $value: new Plan('EmptyScan', {}) };
+          }
+        })();
+        if ((_m4 as any)?.$jump === 'return') return (_m4 as any).$value;
+        _moved2 = true;
+        let _moved5 = false;
+        const bounds_1 = (_m4 as any);
+        try {
+          let _moved6 = false;
+          const remainingPredicate = this.calculateRemainingPredicate(conjuncts, equalities, inequalityField);
+          try {
+            let _moved9 = false;
+            const orderBySpill = (() => {
+              {
+                const _v1 = orderBy;
+                if (_v1 != null) {
+                  const orderByItems = _v1;
+                  const coveredFields = HashSet.from([...[...equalities].map(([f, ]) => f), ...once(inequalityField)]);
+                  let _moved7 = false;
+                  let presort = [];
+                  try {
+                    let _moved8 = false;
+                    let spill = [];
+                    try {
+                      for (const item of orderByItems) {
+                        if (item.path.isSimple()) {
+                          const name = item.path.first();
+                          if (coveredFields.has(name)) {
+                            presort.push(item.clone());
+                          } else {
+                            spill.push(item.clone());
+                          }
+                        }
+                      }
+                      _moved7 = true;
+                      _moved8 = true;
+                      return OrderByComponents.new(presort, spill);
+                    } finally {
+                      if (!_moved8) dropOwned(spill);
+                    }
+                  } finally {
+                    if (!_moved7) dropOwned(presort);
+                  }
+                } else {
+                return OrderByComponents.default();
+              }
+              }
+            })();
+            try {
+              _moved0 = true;
+              let _moved10 = false;
+              const indexSpec = KeySpec.new(indexKeyparts);
+              try {
+                _moved10 = true;
+                _moved5 = true;
+                _moved6 = true;
+                _moved9 = true;
+                return new Plan('Index', { indexSpec: indexSpec, scanDirection: new ScanDirection('Forward', {}), bounds: bounds_1, remainingPredicate: remainingPredicate, orderBySpill: orderBySpill });
+              } finally {
+                if (!_moved10) indexSpec.drop();
+              }
+            } finally {
+              if (!_moved9) orderBySpill.drop();
             }
           } finally {
-            if (!_moved6) dropOwned(bounds_1);
+            if (!_moved6) remainingPredicate.drop();
           }
         } finally {
-          if (!_moved3) dropOwned(bounds);
+          if (!_moved5) dropOwned(bounds_1);
         }
       } finally {
-        if (!_moved2) firstInequalityValue.drop();
+        if (!_moved2) dropOwned(bounds);
       }
     } finally {
       if (!_moved0) dropOwned(indexKeyparts);

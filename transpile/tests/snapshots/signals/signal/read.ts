@@ -82,7 +82,7 @@ export class Read<T extends Clone & PartialEq & Eq & Display> extends Struct imp
   listen(listener: Listener): ListenerGuard {
     const _t0 = this.broadcast.reference();
     try {
-      return ListenerGuard.new(_t0.listen(new BroadcastListener('NotifyOnly', { _0: Arc.new(new OwnedClosure([listener], () => invokeRef(listener, []))) })));
+      return ListenerGuard.new(_t0.listen(new BroadcastListener('NotifyOnly', { _0: Arc.new(new OwnedClosure([listener], () => invokeRef(listener.value, []))) })));
     } finally {
       _t0.drop();
     }
