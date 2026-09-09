@@ -69,58 +69,66 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
                 }
               })();
               if ((_m5 as any)?.$jump === 'continue') continue;
+              let _moved6 = false;
               const record = (_m5 as any);
-              let _c7;
-              const _r6 = evaluatePredicate(record, predicate).mapErr((e) => {
-                try {
-                  return new RetrievalError('StorageError', { _0: `Predicate evaluation failed: ${e}` });
-                } finally {
-                  e.drop();
-                }
-              });
-              if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
-              _c7 = _r6.unwrap();
-              if (_c7) {
-                if (needsSpillSort) {
-                  rows.push(record);
-                } else {
-                  {
-                    const _v5 = record.entityState();
-                    if (_v5.isOk()) {
-                      const entityState = _v5.unwrap();
-                      directResults.push(entityState);
-                      count = checkedAdd(count, 1n, 'u64');
-                      {
-                        const _v4 = limit;
-                        if (_v4 != null) {
-                          const limitVal = _v4;
-                          if (count >= limitVal) {
-                            break;
+              try {
+                let _c8;
+                const _r7 = evaluatePredicate(record, predicate).mapErr((e) => {
+                  try {
+                    return new RetrievalError('StorageError', { _0: `Predicate evaluation failed: ${e}` });
+                  } finally {
+                    e.drop();
+                  }
+                });
+                if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
+                _c8 = _r7.unwrap();
+                if (_c8) {
+                  if (needsSpillSort) {
+                    _moved6 = true;
+                    rows.push(record);
+                  } else {
+                    {
+                      const _v5 = record.entityState();
+                      if (_v5.isOk()) {
+                        const entityState = _v5.unwrap();
+                        directResults.push(entityState);
+                        count = checkedAdd(count, 1n, 'u64');
+                        {
+                          const _v4 = limit;
+                          if (_v4 != null) {
+                            const limitVal = _v4;
+                            if (count >= limitVal) {
+                              break;
+                            }
                           }
                         }
-                      }
+                      } else {
+                      _v5.drop();
+                    }
                     }
                   }
                 }
+              } finally {
+                if (!_moved6) record.drop();
               }
             }
             if (needsSpillSort) {
               const results = await (async () => {
                 if (limit != null) {
                   const limitVal = limit;
-                  const _b12 = orderBySpill.clone();
+                  const _b13 = orderBySpill.clone();
                   try {
-                    const _b14 = Number(BigInt.asUintN(32, limitVal));
+                    const _b15 = Number(BigInt.asUintN(32, limitVal));
                     return await unsupported('`collect` into `Collect<FilterMap<TopKStream<Iter<IntoIter>>, Fut, F>, C>` is a `FromIterator` the port has no construction for');
                   } finally {
-                    dropOwned(_b12);
+                    dropOwned(_b13);
                   }
                 } else {
-                  const _b15 = orderBySpill.clone();
+                  const _b16 = orderBySpill.clone();
                   try {
                     return await unsupported('`collect` into `Collect<FilterMap<SortedStream<Iter<IntoIter>>, Fut, F>, C>` is a `FromIterator` the port has no construction for');
                   } finally {
-                    dropOwned(_b15);
+                    dropOwned(_b16);
                   }
                 }
               })();

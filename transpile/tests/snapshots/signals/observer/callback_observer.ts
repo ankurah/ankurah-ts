@@ -85,15 +85,19 @@ export class CallbackObserver extends Struct implements Observer {
         }
       }
       const weak = new WeakCallbackObserver(this._0.downgrade());
-      entries.value.set(broadcastId, new SubscriptionEntry(signal.listen(Arc.new((_) => {
+      entries.value.set(broadcastId, new SubscriptionEntry(signal.listen(Arc.new(new OwnedClosure([weak], (_) => {
         {
           const _v1 = weak.upgrade();
           if (_v1 != null) {
             const observer = _v1;
-            observer.trigger();
+            try {
+              observer.trigger();
+            } finally {
+              observer.drop();
+            }
           }
         }
-      })), false));
+      }))), false));
     } finally {
       entries.drop();
     }

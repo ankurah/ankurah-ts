@@ -181,9 +181,10 @@ fn a_poisoned_variable_stands_for_nothing() {
     // The binding that came first is not an answer: a constraint with no
     // solution touched it, so it resolves as the unknown it is.
     let mut table = InferTable::new();
-    let v = Ty::Var(table.fresh());
+    let id = table.fresh();
+    let v = Ty::Var(id);
     assert_eq!(table.unify(&v, &Ty::Str), Ok(()));
-    table.poison(&v);
+    table.poison_ids([id]);
     assert_eq!(table.resolve(&v), v);
 }
 
@@ -192,20 +193,41 @@ fn a_poisoned_variable_meets_anything_and_holds_nothing() {
     // One constraint with no solution is the report; every constraint after it
     // would say the same failure again in another position.
     let mut table = InferTable::new();
-    let v = Ty::Var(table.fresh());
-    table.poison(&v);
+    let id = table.fresh();
+    let v = Ty::Var(id);
+    table.poison_ids([id]);
     assert_eq!(table.unify(&v, &Ty::Prim(Prim::U8)), Ok(()));
     assert_eq!(table.resolve(&v), v);
 }
 
 #[test]
-fn poison_reaches_a_variable_the_binding_hid() {
+fn a_failed_walk_names_every_unknown_it_went_through() {
+    // What a constraint stands on is what the walk followed, on both sides.
+    // Poisoning reads this rather than trying to recover a variable from types
+    // the solve has already replaced by what they stand for.
     let mut table = InferTable::new();
-    let outer = Ty::Var(table.fresh());
-    let inner = Ty::Var(table.fresh());
-    assert_eq!(table.unify(&outer, &named(1, vec![inner.clone()])), Ok(()));
-    table.poison(&outer);
-    assert_eq!(table.resolve(&inner), inner, "the hidden variable was left standing");
+    let a = table.fresh();
+    let b = table.fresh();
+    assert_eq!(table.unify(&Ty::Var(a), &Ty::Str), Ok(()));
+    assert_eq!(table.unify(&Ty::Var(b), &Ty::Prim(Prim::U8)), Ok(()));
+    assert!(table.unify(&Ty::Var(a), &Ty::Var(b)).is_err());
+    assert_eq!(table.touched(), vec![a, b]);
+}
+
+#[test]
+fn a_failed_walk_names_an_unknown_inside_the_shape() {
+    // `Vec<?0>` against `Vec<usize>` stands on `?0`, which is the whole of what
+    // the collection's element disagreeing means.
+    let mut table = InferTable::new();
+    let elem = table.fresh();
+    assert_eq!(table.unify(&Ty::Var(elem), &Ty::Str), Ok(()));
+    assert!(table
+        .unify(
+            &named(1, vec![Ty::Var(elem)]),
+            &named(1, vec![Ty::Prim(Prim::U8)])
+        )
+        .is_err());
+    assert_eq!(table.touched(), vec![elem]);
 }
 
 #[test]
@@ -213,9 +235,9 @@ fn what_the_solve_decided_only_ever_grows() {
     // The fixed point stops when a round decides nothing new, so poisoning has
     // to count as a decision or the walk would never come to rest.
     let mut table = InferTable::new();
-    let v = Ty::Var(table.fresh());
+    let id = table.fresh();
     let before = table.bound_count();
-    table.poison(&v);
+    table.poison_ids([id]);
     assert!(table.bound_count() > before);
 }
 
@@ -223,7 +245,7 @@ fn what_the_solve_decided_only_ever_grows() {
 fn a_restricted_variable_binds_only_what_its_kind_admits() {
     let mut table = InferTable::new();
     let n = Ty::Var(table.kinded_at_site(1, 1, 0, VarKind::Integral));
-    assert!(matches!(table.unify(&n, &Ty::Unit), Err(Mismatch::Shape { .. })));
+    assert!(matches!(table.unify(&n, &Ty::Unit), Err(Mismatch::Kind { .. })));
     assert_eq!(table.unify(&n, &Ty::Prim(Prim::Usize)), Ok(()));
     assert_eq!(table.resolve(&n), Ty::Prim(Prim::Usize));
 }
@@ -246,7 +268,7 @@ fn a_restriction_travels_to_the_variable_it_meets() {
     let n = Ty::Var(table.kinded_at_site(1, 1, 0, VarKind::Integral));
     let m = Ty::Var(table.fresh());
     assert_eq!(table.unify(&n, &m), Ok(()));
-    assert!(matches!(table.unify(&m, &Ty::Str), Err(Mismatch::Shape { .. })));
+    assert!(matches!(table.unify(&m, &Ty::Str), Err(Mismatch::Kind { .. })));
 }
 
 #[test]

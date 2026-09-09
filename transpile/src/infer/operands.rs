@@ -16,8 +16,29 @@ impl TypeContext<'_> {
     pub(super) fn binary_type(&self, bin: &syn::ExprBinary, expected: Option<&Ty>) -> Result<Ty, Diag> {
         use syn::BinOp::*;
         match bin.op {
-            Eq(_) | Ne(_) | Lt(_) | Le(_) | Gt(_) | Ge(_) | And(_) | Or(_) => {
-                return Ok(Ty::Prim(Prim::Bool))
+            // A comparison answers `bool` whatever it compares, but the two
+            // sides are one type, which is what gives an unsuffixed literal its
+            // width: `n < 5` where `n: u64` compares two 64-bit values.
+            Eq(_) | Ne(_) | Lt(_) | Le(_) | Gt(_) | Ge(_) => {
+                if let (Ok(left), Ok(right)) =
+                    (self.resolve_expr(&bin.left), self.resolve_expr(&bin.right))
+                {
+                    self.constrain_here(syn::spanned::Spanned::span(&bin.right), &left, &right);
+                }
+                return Ok(Ty::Prim(Prim::Bool));
+            }
+            // `&&` and `||` take `bool` on both sides and nothing else.
+            And(_) | Or(_) => {
+                for side in [&bin.left, &bin.right] {
+                    if let Ok(found) = self.resolve_expr(side) {
+                        self.constrain_here(
+                            syn::spanned::Spanned::span(side),
+                            &Ty::Prim(Prim::Bool),
+                            &found,
+                        );
+                    }
+                }
+                return Ok(Ty::Prim(Prim::Bool));
             }
             AddAssign(_) | SubAssign(_) | MulAssign(_) | DivAssign(_) | RemAssign(_)
             | BitXorAssign(_) | BitAndAssign(_) | BitOrAssign(_) | ShlAssign(_)
@@ -191,23 +212,63 @@ impl TypeContext<'_> {
             return Some(Ty::Prim(Prim::Usize));
         }
         if let syn::Expr::Range(range) = index {
-            return self.range_type(range);
+            // A range BETWEEN THE BRACKETS is a range of `usize`, for the same
+            // reason a bare literal there is.
+            return self.range_shape(range, &|e| self.index_type(e));
         }
-        self.resolve_expr(index).ok()
+        let found = self.resolve_expr(index).ok()?;
+        // So is a `{integer}` that arrived from somewhere else, such as the
+        // element of `for i in (0..16).rev()`: the position is what decides it,
+        // and the constraint is what carries that back to where it was written.
+        let Ty::Var(id) = &found else { return Some(found) };
+        let integral = self.vars.borrow().kind_of(*id) == Some(crate::ty::VarKind::Integral);
+        if !integral {
+            return Some(found);
+        }
+        let usize_ty = Ty::Prim(Prim::Usize);
+        self.constrain_here(syn::spanned::Spanned::span(index), &usize_ty, &found);
+        Some(usize_ty)
     }
 
     /// `a..b` is a `Range<A>`, `a..` a `RangeFrom<A>`, `..b` a `RangeTo<A>`,
     /// `..` a `RangeFull` and `a..=b` a `RangeInclusive<A>`, each declared in
     /// `std::ops`.
+    ///
+    /// The endpoints are read by the ordinary rules, so an unsuffixed literal
+    /// there is Rust's `{integer}` and the other endpoint's suffix decides it:
+    /// reading the START as `usize` made `for i in 0..4u8` an iteration over
+    /// `usize` and reported the `u8` the body then met as a contradiction.
     pub(super) fn range_type(&self, range: &syn::ExprRange) -> Option<Ty> {
+        let endpoint = |e: &syn::Expr| self.resolve_expr(e).ok();
+        // Both ends are one type, which is how the end's suffix settles the
+        // start's literal and the other way round.
+        if let (Some(start), Some(end)) = (&range.start, &range.end) {
+            if let (Some(a), Some(b)) = (endpoint(start), endpoint(end)) {
+                self.constrain_here(syn::spanned::Spanned::span(end), &a, &b);
+            }
+        }
+        self.range_shape(range, &endpoint)
+    }
+
+    /// The `std::ops` range type a written range has, with each end read by
+    /// `endpoint`.
+    fn range_shape(
+        &self,
+        range: &syn::ExprRange,
+        endpoint: &dyn Fn(&syn::Expr) -> Option<Ty>,
+    ) -> Option<Ty> {
         let closed = matches!(range.limits, syn::RangeLimits::Closed(_));
-        let end_ty = |e: &Option<Box<syn::Expr>>| e.as_deref().and_then(|e| self.index_type(e));
         let (path, arg) = match (&range.start, &range.end) {
-            (Some(start), Some(_)) if closed => ("std::ops::RangeInclusive", self.index_type(start)),
-            (Some(start), Some(_)) => ("std::ops::Range", self.index_type(start)),
-            (Some(start), None) => ("std::ops::RangeFrom", self.index_type(start)),
-            (None, Some(_)) if closed => ("std::ops::RangeToInclusive", end_ty(&range.end)),
-            (None, Some(_)) => ("std::ops::RangeTo", end_ty(&range.end)),
+            (Some(start), Some(end)) if closed => (
+                "std::ops::RangeInclusive",
+                endpoint(start).or_else(|| endpoint(end)),
+            ),
+            (Some(start), Some(end)) => {
+                ("std::ops::Range", endpoint(start).or_else(|| endpoint(end)))
+            }
+            (Some(start), None) => ("std::ops::RangeFrom", endpoint(start)),
+            (None, Some(end)) if closed => ("std::ops::RangeToInclusive", endpoint(end)),
+            (None, Some(end)) => ("std::ops::RangeTo", endpoint(end)),
             (None, None) => ("std::ops::RangeFull", None),
         };
         let id = self.registry.system_type(path)?;

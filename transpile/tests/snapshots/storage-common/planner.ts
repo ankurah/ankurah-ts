@@ -606,7 +606,7 @@ export class Planner extends Struct {
             if (!_moved6) remainingPredicate.drop();
           }
         } finally {
-          if (!_moved5) dropOwned(bounds_1);
+          if (!_moved5) bounds_1.drop();
         }
       } finally {
         if (!_moved2) dropOwned(bounds);
@@ -666,7 +666,7 @@ export class Planner extends Struct {
           if (!_moved4) remainingPredicate.drop();
         }
       } finally {
-        if (!_moved3) dropOwned(bounds_1);
+        if (!_moved3) bounds_1.drop();
       }
     } finally {
       if (!_moved0) dropOwned(indexKeyparts);

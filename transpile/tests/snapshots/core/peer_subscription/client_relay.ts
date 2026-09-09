@@ -754,30 +754,36 @@ export async function WeakNode_remoteSubscribe<SE extends StorageEngine, PA exte
               });
             })();
             if ((_m6 as any)?.$jump === 'return') return (_m6 as any).$value;
+            let _moved7 = false;
             const deltas = (_m6 as any);
-            tracing.debug(`Node.remote_subscribe: query_id: ${queryId}, collection_id: ${collectionId}, received deltas: ${deltas.length}`);
-            _moved0 = true;
-            const retriever = EphemeralNodeRetriever.new(collectionId, node, contextData);
             try {
-              const applyResult = await NodeApplier.applyDeltas(node, peerId, deltas, retriever);
+              tracing.debug(`Node.remote_subscribe: query_id: ${queryId}, collection_id: ${collectionId}, received deltas: ${deltas.length}`);
+              _moved0 = true;
+              const retriever = EphemeralNodeRetriever.new(collectionId, node, contextData);
               try {
-                const eventStoreResult = await retriever.storeUsedEvents();
+                _moved7 = true;
+                const applyResult = await NodeApplier.applyDeltas(node, peerId, deltas, retriever);
                 try {
-                  const _r7 = applyResult;
-                  if (_r7.isErr()) return Result.Err(RetrievalError.fromApplyError(_r7.unwrapErr()));
-                  _r7.drop();
-                  const _r8 = eventStoreResult;
-                  if (_r8.isErr()) return Result.Err(RetrievalError.fromMutationError(_r8.unwrapErr()));
-                  _r8.drop();
-                  return Result.Ok([]);
+                  const eventStoreResult = await retriever.storeUsedEvents();
+                  try {
+                    const _r8 = applyResult;
+                    if (_r8.isErr()) return Result.Err(RetrievalError.fromApplyError(_r8.unwrapErr()));
+                    _r8.drop();
+                    const _r9 = eventStoreResult;
+                    if (_r9.isErr()) return Result.Err(RetrievalError.fromMutationError(_r9.unwrapErr()));
+                    _r9.drop();
+                    return Result.Ok([]);
+                  } finally {
+                    eventStoreResult.drop();
+                  }
                 } finally {
-                  eventStoreResult.drop();
+                  applyResult.drop();
                 }
               } finally {
-                applyResult.drop();
+                retriever.drop();
               }
             } finally {
-              retriever.drop();
+              if (!_moved7) dropOwned(deltas);
             }
           } finally {
             if (_r5 != null && !(_r5 as any).isMoved && !(_r5 as any).isDropped) dropOwned(_r5);

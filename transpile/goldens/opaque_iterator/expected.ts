@@ -22,7 +22,7 @@ export function takeSome<I extends Iterable<Token>>(values: SeqCursor<Token>, wa
       const token = _v;
       try {
         total = checkedAdd(total, token.n, 'i32');
-        taken = checkedAdd(taken, 1, 'i32');
+        taken = checkedAdd(taken, 1, 'u32');
       } finally {
         token.drop();
       }

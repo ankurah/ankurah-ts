@@ -12,6 +12,8 @@ mod vars;
 mod vars_tests;
 
 pub use def::{ArrayLen, IdSpaceExhausted, Prim, TraitRef, Ty, TypeId};
+#[cfg(test)]
+pub use def::InferId;
 pub use subst::bind_params;
 pub use unify::{unify, Mismatch};
-pub use vars::{Contradiction, InferTable, VarKind};
+pub use vars::{Contradiction, InferTable, VarKind, UNDECIDED_RESULT};

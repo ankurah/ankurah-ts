@@ -169,6 +169,12 @@ pub struct MethodResolution {
     /// cannot name it. Rust would not admit the method at all; the engine takes
     /// it and says so.
     pub out_of_scope: Option<TypeId>,
+    /// Another candidate answers to this name deeper along the deref chain, and
+    /// which of the two Rust calls rests on a bound the solve has not settled.
+    /// The callee written here is the shallower one, Rust's answer wherever the
+    /// bound holds; what the call PRODUCES is not a fact until the solve says
+    /// so, so a reader of the type waits.
+    pub contested: bool,
 }
 
 impl MethodResolution {
@@ -274,53 +280,6 @@ impl<'a> Probe<'a> {
             receiver: receiver.clone(),
             tried: candidates,
         })
-    }
-
-    /// The first step of the deref chain that answers to `name`, preferring a
-    /// candidate that applies outright.
-    ///
-    /// A candidate that applies only IF something nobody has decided holds
-    /// ranks below one that applies outright, at EVERY depth: `w.go()` on a
-    /// `Wrap<B>` reaches `Inner::go` through `Deref`, where the extension impl
-    /// written `impl<T: Red> Ext for Wrap<T>` wants a bound `B` does not meet.
-    fn walk_chain(
-        &self,
-        candidates: &[Ty],
-        steps: &[DerefStep],
-        name: &str,
-        explicit: &[Ty],
-        undecided: &[Obligation],
-        in_scope_only: bool,
-    ) -> Result<Option<MethodResolution>, MethodError> {
-        let mut deferred: Option<MethodResolution> = None;
-        for (depth, candidate) in candidates.iter().enumerate() {
-            for autoref in [AutoRef::None, AutoRef::Shared, AutoRef::Mut] {
-                let found = self.pick(candidate, autoref, name, explicit, in_scope_only)?;
-                let Some(pick) = found else { continue };
-                let ret = self.normalize(&pick.ret);
-                let outright = pick.obligations.is_empty();
-                let mut obligations = undecided.to_vec();
-                obligations.extend(pick.obligations);
-                let out_of_scope = (!self.trait_in_scope(&pick.callee))
-                    .then(|| self.trait_of(&pick.callee))
-                    .flatten();
-                let found = MethodResolution {
-                    steps: steps[..depth].to_vec(),
-                    autoref,
-                    callee: pick.callee,
-                    subst: pick.subst,
-                    ret,
-                    adjusted: autoref.apply(candidate),
-                    obligations,
-                    out_of_scope,
-                };
-                if outright {
-                    return Ok(Some(found));
-                }
-                deferred.get_or_insert(found);
-            }
-        }
-        Ok(deferred)
     }
 
     /// The trait a callee came through, when it came through one.

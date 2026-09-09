@@ -182,7 +182,7 @@ describe('resultset unit tests', () => {
           let _moved1 = false;
           let props = new HashMap();
           try {
-            props.set('value', new Value('I32', { _0: (i | 0) }));
+            props.set('value', new Value('I32', { _0: i }));
             _moved1 = true;
             const entity = TestEntity.new(i, props);
             write.add(entity);

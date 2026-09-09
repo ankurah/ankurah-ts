@@ -83,6 +83,32 @@ impl TypeRegistry {
 
         sig.map(|sig| param_types(&sig, &subst)).unwrap_or_default()
     }
+
+    /// The same, with the impl's parameters bound to the receiver AS WRITTEN:
+    /// the unknowns the scope still holds, rather than what an earlier round
+    /// bound them to.
+    ///
+    /// A parameter substituted from the SOLVED receiver names no unknown, so a
+    /// round that fails it cannot say what it stood on: `xs.push("x")` after
+    /// `xs.push(1u32)` left `?0` standing for `u32`.
+    pub fn method_param_types_as_written(
+        &self,
+        found: &MethodResolution,
+        written: &Ty,
+    ) -> Vec<Ty> {
+        let mut subst = found.subst.clone();
+        if let Some(id) = found.callee.impl_id() {
+            if let Some(as_written) = self.impl_def(id).match_self(written.peel_refs()) {
+                subst.extend(as_written);
+            }
+        }
+        subst
+            .entry("Self".to_string())
+            .or_insert_with(|| written.peel_refs().clone());
+        self.method_sig(found)
+            .map(|sig| param_types(&sig, &subst))
+            .unwrap_or_default()
+    }
 }
 
 /// What a signature declares at each parameter, with `subst` applied and each of

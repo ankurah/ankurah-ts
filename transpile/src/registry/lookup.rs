@@ -10,8 +10,9 @@
 use std::collections::HashSet;
 
 use super::module::{Def, ModuleId, Ns, Vis};
+use super::TypeKind;
 use super::TypeRegistry;
-use crate::ty::TypeId;
+use crate::ty::{Ty, TypeId};
 
 /// What Rust's standard prelude puts in scope without a `use`, and the module
 /// each name comes from. Every other declared type needs an import or a
@@ -128,6 +129,52 @@ impl TypeRegistry {
     /// Resolve a written type path.
     pub fn lookup_type(&self, from: ModuleId, segments: &[String]) -> Found {
         self.lookup(from, Ns::Type, segments)
+    }
+
+    /// The type a path names where the path IS a value, carrying nothing: the
+    /// enum of a unit variant, or a unit struct.
+    ///
+    /// Both are a bare path with no call and no braces. A unit struct left
+    /// untyped left the argument of `w.set(Marker)` typeless, and with it every
+    /// unknown the receiver carried.
+    pub fn type_written_as_a_value(&self, from: ModuleId, segments: &[String]) -> Option<Ty> {
+        let id = match self.lookup_variant(from, segments) {
+            Some((id, _)) => id,
+            None => match self.lookup_type(from, segments) {
+                Ok(Some(Def::Type(id))) => {
+                    let def = self.def(id)?;
+                    if !matches!(def.kind, TypeKind::Struct) || !def.field_order.is_empty() {
+                        return None;
+                    }
+                    id
+                }
+                _ => return None,
+            },
+        };
+        let params = self.def(id)?.type_params.clone();
+        Some(Ty::Named {
+            id,
+            args: params.into_iter().map(Ty::Param).collect(),
+        })
+    }
+
+    /// The type a path names where the path is a TUPLE STRUCT's constructor,
+    /// which is that struct's own name used as a function.
+    pub fn tuple_struct_constructed(&self, from: ModuleId, segments: &[String]) -> Option<Ty> {
+        let Ok(Some(Def::Type(id))) = self.lookup_type(from, segments) else {
+            return None;
+        };
+        let def = self.def(id)?;
+        let positional = !def.field_order.is_empty()
+            && def.field_order.iter().enumerate().all(|(i, f)| *f == format!("_{}", i));
+        if !matches!(def.kind, TypeKind::Struct) || !positional {
+            return None;
+        }
+        let params = def.type_params.clone();
+        Some(Ty::Named {
+            id,
+            args: params.into_iter().map(Ty::Param).collect(),
+        })
     }
 
     /// The enum a written path names, together with the variant on the end.

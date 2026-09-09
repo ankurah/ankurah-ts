@@ -50,7 +50,7 @@ pub const TEXT_ONLY: [(&str, &str); 4] = [
 /// README already doubts. None of them is a reason to relax the check.
 /// What each golden still fails to compile with, as one entry per error:
 /// `<file>:<code>`, sorted. Every entry is a decision somebody read.
-pub const TYPECHECK_DEBT: [(&str, &[&str], &str); 6] = [
+pub const TYPECHECK_DEBT: [(&str, &[&str], &str); 7] = [
     (
         "an_unknown_nothing_settles",
         &[
@@ -81,6 +81,14 @@ pub const TYPECHECK_DEBT: [(&str, &[&str], &str); 6] = [
          of anything else does not typecheck even though Rust builds one. What the golden \
          proves is the resolution: the conditional impl does not win over a method the deref \
          chain reaches. How a conditional impl should be emitted is the open question",
+    ),
+    (
+        "a_conditional_impl_wins_where_its_bound_holds",
+        &["a_conditional_impl_wins_where_its_bound_holds/input.ts:TS2344"],
+        "the same emission gap as `a_conditional_impl_loses`: `impl<T: Red> Ext for Wrap<T>` \
+         puts its bound on the CLASS. What this golden proves is the other half of the \
+         resolution rule — while the element is an unknown the engine keeps the shallow \
+         candidate, so a `Wrap<R>` calls `Ext::go` and not the method one `Deref` away",
     ),
     (
         "a_bag_built_from_a_borrow",

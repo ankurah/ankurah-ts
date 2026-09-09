@@ -42,6 +42,11 @@ pub enum Mismatch {
     /// Binding would make an inference variable contain itself, as `?0 =
     /// Vec<?0>` does. There is no such type, so the constraint has no solution.
     VarOccurs { var: InferId, ty: Ty },
+    /// An unsuffixed literal was asked to be a type its kind excludes: Rust's
+    /// `{integer}` standing for a float, or the other way round. The
+    /// restriction is a fact about the program, so this is a contradiction even
+    /// while the variable itself stands for nothing yet.
+    Kind { var: InferId, ty: Ty },
 }
 
 impl std::fmt::Display for Mismatch {
@@ -58,6 +63,9 @@ impl std::fmt::Display for Mismatch {
             Mismatch::VarOccurs { .. } => {
                 write!(f, "an inferred type would contain itself")
             }
+            Mismatch::Kind { .. } => {
+                write!(f, "a literal cannot be both an integer and a float")
+            }
         }
     }
 }
@@ -67,8 +75,10 @@ impl std::fmt::Display for Mismatch {
 /// one place rather than once per unifier.
 pub trait Unknowns {
     /// What this side stands for now, when a binding already made says so.
-    /// `None` means it stands for itself.
-    fn follow(&self, ty: &Ty) -> Option<Ty> {
+    /// `None` means it stands for itself. Every unknown the walk asks about
+    /// passes through here, which is where a table records what a constraint
+    /// stands on.
+    fn follow(&mut self, ty: &Ty) -> Option<Ty> {
         let _ = ty;
         None
     }

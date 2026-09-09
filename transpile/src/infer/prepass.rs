@@ -94,7 +94,7 @@ struct Prepass<'a, 'b> {
 impl Prepass<'_, '_> {
     /// The type of an expression, asked for its constraints alone.
     fn type_of(&mut self, expr: &syn::Expr) -> Option<Ty> {
-        self.tc.resolve_expr(expr).ok()
+        self.tc.resolve_expr_as_written(expr).ok()
     }
 
     /// Constrain what this expression is against what the body answers with.
@@ -172,7 +172,13 @@ impl<'ast> Visit<'ast> for Prepass<'_, '_> {
                     .constrain_here(syn::spanned::Spanned::span(&init.expr), &written, &found);
             }
         }
-        let ty = self.tc.resolve_local_type(local).ok();
+        // The local keeps the unknowns its initialiser stands on, so that a
+        // constraint below it that fails can say which one it stood on. An
+        // annotation is the type as the source wrote it and stands as it is.
+        let ty = match (self.tc.local_annotation(local), &local.init) {
+            (None, Some(init)) => self.type_of(&init.expr),
+            _ => self.tc.resolve_local_type(local).ok(),
+        };
         self.tc.bind_pattern(&local.pat, ty.as_ref());
     }
 

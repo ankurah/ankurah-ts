@@ -174,7 +174,7 @@ export function letInit(cause: Cause): number {
     Missing: () => 2,
     Other: () => 2,
   });
-  return checkedAdd(picked, 1, 'i32');
+  return checkedAdd(picked, 1, 'usize');
 }
 
 export function asArgument(cause: Cause): number {

@@ -382,8 +382,8 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                   })();
                   if ((_m4 as any)?.$jump === 'continue') continue;
                   const queryState = (_m4 as any);
-                  const selection = queryState.selection.asRef();
-                  tracing.debug(`\tevaluate_changes query: ${queryId} ${selection}`);
+                  const selection = (queryState.selection ?? (() => { throw new Error('evaluate_changes called before update_query'); })());
+                  tracing.debug(`\tevaluate_changes query: ${queryId} ${selection.debug()}`);
                   for (const change of queryCandidate.iter()) {
                     const entity = change.entity();
                     const entityId = AbstractEntity.id(entity);
@@ -395,14 +395,24 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                       if ((_v3[0] === false) && (_v3[1] === true)) {
                         {
                           const entityClone = entity.clone();
-                          queryState.resultset.write().add(entityClone.clone());
+                          const _t7 = queryState.resultset.write();
+                          try {
+                            _t7.add(entityClone.clone());
+                          } finally {
+                            _t7.drop();
+                          }
                           state.entities.set(entityId, entityClone);
                           watcherChanges.push(WatcherChange.add(entityId, this.deref().id, queryId));
                           return new MembershipChange('Add', {});
                         }
                       } else if ((_v3[0] === true) && (_v3[1] === false)) {
                         {
-                          queryState.resultset.write().remove(entityId);
+                          const _t8 = queryState.resultset.write();
+                          try {
+                            _t8.remove(entityId);
+                          } finally {
+                            _t8.drop();
+                          }
                           watcherChanges.push(WatcherChange.remove(entityId, this.deref().id, queryId));
                           return new MembershipChange('Remove', {});
                         }
@@ -436,37 +446,37 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                   items.entry(entityId).orInsert(new ReactorUpdateItem(entity.clone(), change.events().map((e) => derivedClone(e)), []));
                 }
               }
-              let _moved5 = false;
+              let _moved9 = false;
               const gapsToFill = this.collectGapsToFillInternal(state);
               try {
-                let _moved6 = false;
+                let _moved10 = false;
                 const broadcast = state.broadcast.clone();
                 try {
                   _moved2 = true;
                   stateGuard.drop();
                   _moved1 = true;
-                  let _moved7 = false;
+                  let _moved11 = false;
                   const updateItems = items.intoValues();
                   try {
                     if (!(gapsToFill.length === 0)) {
-                      _moved7 = true;
-                      _moved5 = true;
-                      _moved6 = true;
+                      _moved11 = true;
+                      _moved9 = true;
+                      _moved10 = true;
                       spawn(this.clone().fillGapsAndNotify(updateItems, gapsToFill, broadcast));
                     } else if (!(updateItems.length === 0)) {
-                      _moved7 = true;
+                      _moved11 = true;
                       broadcast.send(new ReactorUpdate(updateItems));
                     }
                     _moved0 = true;
                     return watcherChanges;
                   } finally {
-                    if (!_moved7) dropOwned(updateItems);
+                    if (!_moved11) dropOwned(updateItems);
                   }
                 } finally {
-                  if (!_moved6) broadcast.drop();
+                  if (!_moved10) broadcast.drop();
                 }
               } finally {
-                if (!_moved5) dropOwned(gapsToFill);
+                if (!_moved9) dropOwned(gapsToFill);
               }
             } finally {
               if (!_moved2) stateGuard.drop();

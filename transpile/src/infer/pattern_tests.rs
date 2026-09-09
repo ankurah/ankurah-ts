@@ -306,3 +306,84 @@ fn a_pattern_says_what_the_value_it_matches_is() {
         .expect("parses as a pattern");
     assert_eq!(cx.pattern_shape(&bare), None);
 }
+
+#[test]
+fn a_match_takes_its_type_from_the_arms_own_binding() {
+    // `Some(buffer)` shadows the outer `buffer`. Reading the outer one made the
+    // arm's call take an `Option<&Vec<u8>>` where it declares `&Vec<u8>`, and
+    // the engine reported valid Rust as contradicting itself.
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Tag { pub n: u32 }\n\
+         impl Tag {\n    \
+             pub fn new() -> Tag { Tag { n: 0 } }\n    \
+             pub fn from_buffer(buffer: &Vec<u8>) -> Tag { Tag { n: buffer.len() as u32 } }\n\
+         }\n\
+         pub fn build(buffer: Option<&Vec<u8>>) -> u32 {\n    \
+             let made = match buffer {\n        \
+                 Some(buffer) => Tag::from_buffer(buffer),\n        \
+                 None => Tag::new(),\n    \
+             };\n    \
+             made.n\n\
+         }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert!(
+        !c.messages()
+            .iter()
+            .any(|m| m.contains("constrained to be the same type")),
+        "{:?}",
+        c.messages()
+    );
+}
+
+#[test]
+fn a_ranges_end_settles_the_literal_its_start_wrote() {
+    // The endpoints are one type, read by the ordinary rules. Reading the start
+    // as `usize` because it is an unsuffixed literal made `for i in 0..4u8` an
+    // iteration over `usize`, and the `u8` the body then met a contradiction.
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub fn widths() -> Vec<u8> {\n    \
+             let mut xs = Vec::new();\n    \
+             for i in 0..4u8 { xs.push(i); }\n    \
+             xs\n\
+         }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert!(
+        !c.messages()
+            .iter()
+            .any(|m| m.contains("constrained to be the same type")),
+        "{:?}",
+        c.messages()
+    );
+}
+
+#[test]
+fn a_range_of_two_literals_takes_the_width_the_body_asks_for() {
+    // Neither endpoint says a width, so the body does: `add` declares `u32` and
+    // the loop hands it `u32`, rather than the `usize` an index position would
+    // give or the `i32` a literal nothing decided falls back to.
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Store { pub ids: Vec<u32> }\n\
+         impl Store {\n    \
+             pub fn new() -> Store { Store { ids: Vec::new() } }\n    \
+             pub fn add(&mut self, id: u32) { self.ids.push(id); }\n\
+         }\n\
+         pub fn roots() -> usize {\n    \
+             let mut store = Store::new();\n    \
+             for id in 1..=6 { store.add(id); }\n    \
+             store.ids.len()\n\
+         }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert!(
+        !c.messages()
+            .iter()
+            .any(|m| m.contains("constrained to be the same type")),
+        "{:?}",
+        c.messages()
+    );
+}

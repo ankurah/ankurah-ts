@@ -53,10 +53,12 @@ pub struct Contradiction {
     pub want: Ty,
     pub found: Ty,
     pub mismatch: Mismatch,
-    /// The type the constraint was read THROUGH. A method's parameter is the
-    /// receiver's own type argument substituted in, so `xs.push("x")` on a
-    /// `Vec<?0>` disagrees about `?0` even though neither side still names it.
-    pub through: Option<Ty>,
+    /// The unknowns the unification walked through before it failed. They are
+    /// what the constraint stood on, and what it poisons once the solve is
+    /// over: a method's parameter is the receiver's own type argument
+    /// substituted in, so `xs.push("x")` on a `Vec<?0>` stands on `?0` even
+    /// though neither side still spells it.
+    pub touched: Vec<InferId>,
     /// Would Rust coerce here? It does where a value MEETS a declared type and
     /// nowhere inside one, and the re-check at the end of the solve has to ask
     /// the same question the site asked.
@@ -66,6 +68,10 @@ pub struct Contradiction {
 /// Which unknown at a site a refusal takes. One site can also carry an
 /// omitted type argument and a literal, and this index is clear of both.
 const REFUSAL: usize = usize::MAX;
+
+/// Which unknown at a site a method call takes while which method it lands on
+/// still rests on a bound the solve has not settled. Clear of the others.
+pub const UNDECIDED_RESULT: usize = usize::MAX - 1;
 
 /// Every inference variable of one body, and what each stands for.
 ///
@@ -106,6 +112,9 @@ pub struct InferTable {
     /// would have made. The walk that writes a body asks against a copy, so
     /// counting this table's own bindings cannot see a late answer; this can.
     scratch_bindings: usize,
+    /// The unknowns the last unification walked through, in the order it met
+    /// them. A failed constraint stands on exactly these.
+    touched: Vec<InferId>,
 }
 
 impl InferTable {
@@ -213,14 +222,21 @@ impl InferTable {
         self.bound.get(var.0 as usize).and_then(|b| b.as_ref())
     }
 
-    /// Mark every variable this type mentions as standing for nothing — the
-    /// ones written in it, and the ones still left in what it resolves to,
-    /// which is where a variable bound to a shape holding another one hides.
-    pub fn poison(&mut self, ty: &Ty) {
-        let mut found = Vec::new();
-        collect_vars(ty, &mut found);
-        collect_vars(&self.resolve(ty), &mut found);
-        self.poisoned.extend(found);
+    /// The unknowns the last unification walked through. Read by the caller of
+    /// a constraint that failed: they are what it stood on, rather than
+    /// anything recoverable from the types after the solve replaced them.
+    pub fn touched(&self) -> Vec<InferId> {
+        self.touched.clone()
+    }
+
+    /// Mark these unknowns as standing for nothing.
+    pub fn poison_ids(&mut self, ids: impl IntoIterator<Item = InferId>) {
+        self.poisoned.extend(ids);
+    }
+
+    /// Does any of these stand for nothing already?
+    pub fn any_poisoned(&self, ids: &[InferId]) -> bool {
+        ids.iter().any(|id| self.poisoned.contains(id))
     }
 
     /// Does this type name an unknown that stands for nothing?
@@ -228,6 +244,12 @@ impl InferTable {
         let mut found = Vec::new();
         collect_vars(ty, &mut found);
         found.iter().any(|id| self.poisoned.contains(id))
+    }
+
+    /// What a variable is restricted to, where it is one an unsuffixed literal
+    /// minted.
+    pub fn kind_of(&self, id: InferId) -> Option<VarKind> {
+        self.kinds.get(&id).copied()
     }
 
     /// Does this type stand on a width the fallback chose rather than the body?
@@ -340,6 +362,7 @@ impl InferTable {
     /// that did fit. The caller reports it at the site the constraint came
     /// from, naming both types.
     pub fn unify(&mut self, a: &Ty, b: &Ty) -> Result<(), Mismatch> {
+        self.touched.clear();
         let made = self.journal.len();
         let answer = unify_with(&mut BodyVars { table: self }, a, b);
         if answer.is_err() {
@@ -358,11 +381,12 @@ struct BodyVars<'a> {
 }
 
 impl Unknowns for BodyVars<'_> {
-    fn follow(&self, ty: &Ty) -> Option<Ty> {
-        match ty {
-            Ty::Var(id) => self.table.binding(*id).cloned(),
-            _ => None,
-        }
+    fn follow(&mut self, ty: &Ty) -> Option<Ty> {
+        let Ty::Var(id) = ty else { return None };
+        // Every unknown the walk reaches, bound or not. A constraint with no
+        // solution stands on exactly these, and they are what it poisons.
+        self.table.touched.push(*id);
+        self.table.binding(*id).cloned()
     }
 
     fn bind(&mut self, a: &Ty, b: &Ty) -> Option<Result<(), Mismatch>> {
@@ -415,13 +439,25 @@ impl InferTable {
         // xs.len()` is a `usize`, and `n = ()` has no solution.
         if let Some(kind) = self.kinds.get(&var).copied() {
             match ty {
-                Ty::Var(other) => {
-                    self.kinds.entry(*other).or_insert(kind);
-                }
+                // Two restricted variables that alias take one restriction,
+                // and `{integer}` against `{float}` has no solution: `let mut x
+                // = 1; x = 2.0` was silent and its arithmetic went unchecked.
+                Ty::Var(other) => match self.kinds.get(other).copied() {
+                    Some(theirs) if theirs != kind => {
+                        return Err(Mismatch::Kind {
+                            var,
+                            ty: ty.clone(),
+                        })
+                    }
+                    Some(_) => {}
+                    None => {
+                        self.kinds.insert(*other, kind);
+                    }
+                },
                 _ if !kind.admits(ty) => {
-                    return Err(Mismatch::Shape {
-                        pattern: Ty::Var(var),
-                        concrete: ty.clone(),
+                    return Err(Mismatch::Kind {
+                        var,
+                        ty: ty.clone(),
                     })
                 }
                 _ => {}

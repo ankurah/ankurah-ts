@@ -10,7 +10,7 @@ use syn::spanned::Spanned;
 use super::context::TypeContext;
 use crate::diag::Diag;
 use crate::registry::{resolve_type, TypeEnv};
-use crate::ty::{Contradiction, Mismatch, Ty, VarKind};
+use crate::ty::{Contradiction, Mismatch, Ty, VarKind, UNDECIDED_RESULT};
 
 impl TypeContext<'_> {
     /// The type with every unknown the solver has settled replaced by what it
@@ -146,13 +146,10 @@ impl TypeContext<'_> {
                 bindings: Vec::new(),
             };
             for (name, declared) in &bound.bindings {
-                // Through the type AS WRITTEN first: `&Vec<Tag>` iterates
-                // `&Tag`, and reading the by-value impl instead binds the
+                // Through the type AS WRITTEN, and only that: `&Vec<Tag>`
+                // iterates `&Tag`, and reading the by-value impl binds the
                 // caller's own values to a collection that releases them.
-                let Some(found) = self
-                    .project_with(&actual, trait_ref.clone(), name)
-                    .or_else(|| self.project_with(actual.peel_refs(), trait_ref.clone(), name))
-                else {
+                let Some(found) = self.project_with(&actual, trait_ref.clone(), name) else {
                     continue;
                 };
                 self.constrain_here(Spanned::span(arg), declared, &found);
@@ -200,6 +197,9 @@ impl TypeContext<'_> {
             return;
         }
         if let Err(mismatch) = self.constrain(through_the_borrow, actual) {
+            // What the failed walk stood on, read before anything else asks the
+            // table a question of its own and overwrites the record.
+            let touched = self.vars.borrow().touched();
             // `&Vec<T>` stands where `&[T]` is declared: Rust derefs one into
             // the other and the port writes both as one array, so what the two
             // say about each other is their ELEMENT.
@@ -215,12 +215,17 @@ impl TypeContext<'_> {
             if !self.vars.borrow().solving() {
                 return;
             }
-            if !self.disagrees(
-                &self.probe(),
-                &self.solved(want),
-                &self.solved(actual),
-                at_a_coercion_site,
-            ) {
+            // A literal's restriction is a fact about the program: `{integer}`
+            // asked to be a float has no solution whether or not the variable
+            // itself stands for anything yet.
+            if !matches!(mismatch, Mismatch::Kind { .. })
+                && !self.disagrees(
+                    &self.probe(),
+                    &self.solved(want),
+                    &self.solved(actual),
+                    at_a_coercion_site,
+                )
+            {
                 return;
             }
             // A width the fallback chose stands for what nothing decided, so a
@@ -238,7 +243,7 @@ impl TypeContext<'_> {
                 want: want.clone(),
                 found: actual.clone(),
                 mismatch,
-                through: self.constraining_through.borrow().clone(),
+                touched,
                 coerces: at_a_coercion_site,
             });
         }
@@ -260,32 +265,52 @@ impl TypeContext<'_> {
             if self.vars.borrow().clone().unify(&want, &actual).is_ok() {
                 continue;
             }
-            if !self.disagrees(&self.probe(), &want, &actual, found.coerces) {
+            // One failure poisons what it stood on, and every later constraint
+            // reaching the same unknown fails for that one reason: saying it
+            // again would report the first contradiction in another position.
+            if self.vars.borrow().any_poisoned(&found.touched) {
+                continue;
+            }
+            if !matches!(found.mismatch, Mismatch::Kind { .. })
+                && !self.disagrees(&self.probe(), &want, &actual, found.coerces)
+            {
                 continue;
             }
             // A type still carrying an unknown is one the engine did not
             // finish reading, and what it could not read is no evidence: the
             // unknown is reported where it was bound.
-            if want.mentions_any_var() || actual.mentions_any_var() {
+            if !matches!(found.mismatch, Mismatch::Kind { .. })
+                && (want.mentions_any_var() || actual.mentions_any_var())
+            {
                 continue;
             }
             let message = self.mismatch_message(&want, &actual, &found.mismatch);
             if !said.insert((crate::body::span_position(found.span), message.clone())) {
                 continue;
             }
-            self.vars.borrow_mut().poison(&found.want);
-            self.vars.borrow_mut().poison(&found.found);
-            if let Some(through) = &found.through {
-                self.vars.borrow_mut().poison(through);
-            }
+            self.vars.borrow_mut().poison_ids(found.touched);
             self.sink.report(found.span, message);
         }
     }
 
     /// What a sequence holds: a slice's, an array's, a `Vec`'s or a boxed
     /// slice's element, all of which the port writes as one array.
-    fn sequence_element(&self, ty: &Ty) -> Option<Ty> {
-        match self.solved(ty).peel_refs() {
+    ///
+    /// Read off the type AS WRITTEN where that already says it is a sequence,
+    /// so the element carries the unknown it stands on and a constraint over it
+    /// that fails can say so. `Vec<?0>` against `Vec<usize>` compared `u32`
+    /// with `usize` and poisoned nothing.
+    pub(super) fn sequence_element(&self, ty: &Ty) -> Option<Ty> {
+        let solving = self.vars.borrow().solving();
+        match solving {
+            true => self.sequence_element_of(ty),
+            false => None,
+        }
+        .or_else(|| self.sequence_element_of(&self.solved(ty)))
+    }
+
+    fn sequence_element_of(&self, ty: &Ty) -> Option<Ty> {
+        match ty.peel_refs() {
             Ty::Slice(elem) | Ty::Array { elem, .. } => Some((**elem).clone()),
             Ty::Named { id, args } => {
                 let is = |path| self.registry.system_type(path) == Some(*id);
@@ -310,6 +335,35 @@ impl TypeContext<'_> {
     pub(super) fn var_at(&self, span: proc_macro2::Span, index: usize) -> Ty {
         let at = span.start();
         Ty::Var(self.vars.borrow_mut().at_site(at.line, at.column, index))
+    }
+
+    /// What a call whose method is not decided yet answers: an unknown, held at
+    /// the call's own site until the round that settles the receiver binds it.
+    ///
+    /// Reading the shallow candidate's return while the bound under it is open
+    /// commits a type Rust may not agree with, and the later round then reports
+    /// the engine's own guess as the program's contradiction.
+    pub(super) fn undecided_result(
+        &self,
+        span: proc_macro2::Span,
+        contested: bool,
+        ret: Ty,
+    ) -> Ty {
+        let at = span.start();
+        let mut vars = self.vars.borrow_mut();
+        let held = vars.site(at.line, at.column, UNDECIDED_RESULT);
+        let id = match held {
+            Some(id) => id,
+            None if contested && vars.solving() => {
+                return Ty::Var(vars.at_site(at.line, at.column, UNDECIDED_RESULT))
+            }
+            None => return ret,
+        };
+        drop(vars);
+        if !contested {
+            self.constrain_here(span, &Ty::Var(id), &ret);
+        }
+        Ty::Var(id)
     }
 
     /// What a refusal contributes: nothing. An unknown standing for nothing,
@@ -349,7 +403,7 @@ impl TypeContext<'_> {
     /// cannot say is not this site's failure, so the question is asked quietly.
     pub(super) fn actual_of(&self, arg: &syn::Expr) -> Option<Ty> {
         let mark = self.sink.mark();
-        let found = self.resolve_expr(arg).ok();
+        let found = self.resolve_expr_as_written(arg).ok();
         self.sink.rewind(mark);
         found
     }
@@ -451,140 +505,4 @@ impl TypeContext<'_> {
         let at = crate::body::span_position(Spanned::span(closure));
         self.closure_wants.borrow().get(&at).cloned()
     }
-
-    /// Say that a constraint has no solution, naming both types. Neither side
-    /// is chosen: a type the engine cannot decide is one it reports.
-    pub(super) fn report_mismatch(
-        &self,
-        span: proc_macro2::Span,
-        want: &Ty,
-        found: &Ty,
-        mismatch: &Mismatch,
-    ) {
-        let message = self.mismatch_message(&self.solved(want), &self.solved(found), mismatch);
-        self.sink.report(span, message);
-    }
-
-    /// The wording of that refusal, over types the caller has already solved.
-    fn mismatch_message(&self, want: &Ty, found: &Ty, mismatch: &Mismatch) -> String {
-        format!(
-            "`{}` and `{}` are constrained to be the same type here and cannot be: {}",
-            self.registry.describe(want),
-            self.registry.describe(found),
-            mismatch
-        )
-    }
-}
-
-impl TypeContext<'_> {
-    /// Do two SOLVED types disagree about something the engine has READ?
-    ///
-    /// A projection still standing in a solved type is one the impl table has
-    /// not read, and it may yet BE the type beside it, so that component is
-    /// evidence neither way. Every other component is compared, so a concrete
-    /// neighbour of an unread projection still contradicts and still reports.
-    /// `at_a_coercion_site` says whether Rust would coerce here. It does so
-    /// where a value MEETS a declared type — an argument, an annotation, a
-    /// return, a field — and nowhere inside one: `Vec<Box<Expr>>` handed where
-    /// `Vec<Expr>` is declared is a program Rust rejects.
-    fn disagrees(
-        &self,
-        probe: &crate::registry::Probe<'_>,
-        want: &Ty,
-        found: &Ty,
-        at_a_coercion_site: bool,
-    ) -> bool {
-        let (want, found) = match at_a_coercion_site {
-            true => aligned_references(want, found),
-            // Inside a type argument nothing is coerced, and two references of
-            // the same depth say only what is under them.
-            false => match (want, found) {
-                (Ty::Ref { inner: a, .. }, Ty::Ref { inner: b, .. }) => (&**a, &**b),
-                (a, b) => (a, b),
-            },
-        };
-        let differ = match (want, found) {
-            // Nothing the engine has read: a projection, an unknown, the
-            // source's own hole, a parameter awaiting its instantiation, and a
-            // bound beside a type that merely meets it.
-            (Ty::Assoc { .. } | Ty::Var(_) | Ty::Infer | Ty::Param(_) | Ty::Never, _)
-            | (_, Ty::Assoc { .. } | Ty::Var(_) | Ty::Infer | Ty::Param(_) | Ty::Never)
-            | (Ty::Dyn { .. } | Ty::ImplTrait { .. }, _)
-            | (_, Ty::Dyn { .. } | Ty::ImplTrait { .. }) => return false,
-            (Ty::Named { id: a, args: xs }, Ty::Named { id: b, args: ys }) => {
-                a != b || xs.len() != ys.len() || self.any_disagrees(probe, xs, ys)
-            }
-            (Ty::Tuple(xs), Ty::Tuple(ys)) => {
-                xs.len() != ys.len() || self.any_disagrees(probe, xs, ys)
-            }
-            (Ty::Prim(a), Ty::Prim(b)) => a != b,
-            (Ty::Str, Ty::Str) | (Ty::Unit, Ty::Unit) => false,
-            // Two sequences: which container each side names is the deref the
-            // port writes as one array, so only the element is evidence.
-            // A slice and a sequence that derefs to it are one array in the
-            // port, so only their ELEMENTS are evidence. A slice beside
-            // something that is not a sequence at all is not that array.
-            (Ty::Slice(a) | Ty::Array { elem: a, .. }, other) => match self.sequence_element(other) {
-                Some(b) => self.disagrees(probe, a, &b, false),
-                None => true,
-            },
-            (other, Ty::Slice(b) | Ty::Array { elem: b, .. }) => match self.sequence_element(other) {
-                Some(a) => self.disagrees(probe, &a, b, false),
-                None => true,
-            },
-            _ => true,
-        };
-        // `&String` stands where `&str` is declared and `Box<Expr>` where
-        // `Expr` is: Rust derefs one into the other and the port writes both as
-        // one value, so the two do not disagree about the program.
-        if !at_a_coercion_site {
-            return differ;
-        }
-        differ && !self.reaches(probe, want, found) && !self.reaches(probe, found, want)
-    }
-
-    fn any_disagrees(&self, probe: &crate::registry::Probe<'_>, xs: &[Ty], ys: &[Ty]) -> bool {
-        xs.iter().zip(ys).any(|(x, y)| self.disagrees(probe, x, y, false))
-    }
-
-    /// Does one type reach the other along the deref chain?
-    fn reaches(&self, probe: &crate::registry::Probe<'_>, from: &Ty, to: &Ty) -> bool {
-        // A reference layer is not a `Deref` impl: the alignment rule discounts
-        // exactly one, and taking another here would let `&&T` stand where a
-        // `T` is written.
-        if matches!(from, Ty::Ref { .. }) {
-            return false;
-        }
-        let mut at = from.clone();
-        for _ in 0..8 {
-            let Some(step) = probe.deref_once(&at) else { return false };
-            if *step.to.peel_refs() == *to {
-                return true;
-            }
-            at = step.to;
-        }
-        false
-    }
-}
-
-/// The two types with the references Rust would take off between them.
-///
-/// Deref coercion strips references from the VALUE, so one carrying more than
-/// the declaration wants still meets it. The engine discounts ONE the
-/// declaration has over the value, because the scope holds some receivers
-/// without the borrow Rust gives them; a second is a type the caller never
-/// wrote.
-fn aligned_references<'t>(want: &'t Ty, actual: &'t Ty) -> (&'t Ty, &'t Ty) {
-    let (mut want, mut actual) = (want, actual);
-    while let (Ty::Ref { inner: w, .. }, Ty::Ref { inner: a, .. }) = (want, actual) {
-        want = w;
-        actual = a;
-    }
-    while let Ty::Ref { inner, .. } = actual {
-        actual = inner;
-    }
-    if let Ty::Ref { inner, .. } = want {
-        want = inner;
-    }
-    (want, actual)
 }

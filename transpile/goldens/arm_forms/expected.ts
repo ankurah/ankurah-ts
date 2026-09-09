@@ -161,7 +161,7 @@ export function tally(input: Source, token: Token, floor: number | null): number
           return 0;
         }
       })();
-      const total = checkedAdd(answer, token.n, 'i32');
+      const total = checkedAdd(answer, token.n, 'u32');
       _moved0 = true;
       token.drop();
       return total;

@@ -34,14 +34,13 @@ pub struct TypeContext<'a> {
     pub dictionaries: Vec<crate::convert::dictionary::Dictionary>,
     /// What `Self` means in the enclosing impl.
     pub self_ty: Option<Ty>,
-    /// The parameters of the closure whose body is being typed right now,
-    /// innermost frame last.
+    /// The names bound for the length of the question being asked right now,
+    /// innermost frame last: a closure's parameters while its tail is typed, a
+    /// match arm's bindings while its body is.
     ///
-    /// Asking a closure's tail for its type needs the closure's parameters
-    /// visible, and `resolve_expr` takes `&self` because it answers questions
-    /// rather than translating. This is that one scope, opened for the length
-    /// of the question and closed after it.
-    pub(super) closure_params: std::cell::RefCell<Vec<Vec<(String, Option<Ty>)>>>,
+    /// `resolve_expr` takes `&self` because it answers questions rather than
+    /// translating, so it cannot push a frame on the scope stack.
+    pub(super) question_scope: std::cell::RefCell<Vec<Vec<(String, Option<Ty>)>>>,
     /// The unknowns of the body being typed. A variable stands where the source
     /// left a type for a later use to decide, and what nothing decides is
     /// reported rather than filled in.
@@ -55,10 +54,6 @@ pub struct TypeContext<'a> {
     /// parameters standing for nothing.
     pub(super) closure_wants:
         std::cell::RefCell<std::collections::HashMap<crate::body::Position, Ty>>,
-    /// The type an argument constraint is being read through, while one is
-    /// being read. A parameter's type comes from the receiver's, so a
-    /// contradiction there is about what the receiver carries.
-    pub(super) constraining_through: std::cell::RefCell<Option<Ty>>,
     pub sink: &'a DiagSink,
 }
 
@@ -84,10 +79,9 @@ impl<'a> TypeContext<'a> {
             param_bounds: Vec::new(),
             dictionaries: Vec::new(),
             self_ty,
-            closure_params: std::cell::RefCell::new(Vec::new()),
+            question_scope: std::cell::RefCell::new(Vec::new()),
             vars: std::cell::RefCell::new(InferTable::new()),
             closure_wants: std::cell::RefCell::new(std::collections::HashMap::new()),
-            constraining_through: std::cell::RefCell::new(None),
             sink,
         }
     }
@@ -175,7 +169,7 @@ impl<'a> TypeContext<'a> {
     /// stack, exactly as the closure's own scope would if this were a
     /// translation rather than a question.
     pub fn lookup(&self, name: &str) -> Option<Ty> {
-        match self.closure_param(name) {
+        match self.question_binding(name) {
             Some(ty) => ty,
             None => self.scopes.resolve(name).cloned(),
         }
@@ -193,19 +187,6 @@ impl<'a> TypeContext<'a> {
         self.scopes.pop();
     }
 
-    /// A receiver's type as the scope holds it, with its unknowns still in
-    /// place. What `resolve_expr` answers is already solved, and a constraint
-    /// that fails needs the variable the answer came from.
-    pub(super) fn receiver_unsolved(&self, receiver: &syn::Expr) -> Option<Ty> {
-        match super::calls::unparenthesise(receiver) {
-            syn::Expr::Path(path) => {
-                let name = path.path.get_ident()?.to_string();
-                self.scopes.resolve(&name).cloned()
-            }
-            _ => None,
-        }
-    }
-
     pub fn push_fn(&mut self, params: Vec<(String, Ty)>) {
         self.scopes.push_fn(params);
     }
@@ -217,7 +198,7 @@ impl<'a> TypeContext<'a> {
     /// Is this name bound in scope at all, whether or not the engine could
     /// type what it holds?
     pub fn is_bound(&self, name: &str) -> bool {
-        self.closure_param(name).is_some() || self.scopes.is_bound(name)
+        self.question_binding(name).is_some() || self.scopes.is_bound(name)
     }
 
     /// Would a `let` of this name here be a redeclaration JavaScript refuses?
@@ -269,6 +250,20 @@ impl<'a> TypeContext<'a> {
         self.expr_type(expr, expected).map(|ty| self.solved(&ty))
     }
 
+    /// The same, with the body's unknowns still standing, while the SOLVE runs.
+    ///
+    /// A constraint raised over solved types no longer says which unknown it
+    /// stood on, so nothing can be poisoned. The walk that WRITES the body
+    /// takes the settled answer, because an unknown offered to it is one it
+    /// could bind.
+    pub fn resolve_expr_as_written(&self, expr: &syn::Expr) -> Result<Ty, Diag> {
+        let found = self.expr_type(expr, None)?;
+        match self.vars.borrow().solving() {
+            true => Ok(found),
+            false => Ok(self.solved(&found)),
+        }
+    }
+
     fn expr_type(&self, expr: &syn::Expr, expected: Option<&Ty>) -> Result<Ty, Diag> {
         match expr {
             syn::Expr::Path(path) if path.path.is_ident("self") => self
@@ -293,11 +288,11 @@ impl<'a> TypeContext<'a> {
                         // receiver still carries: `entities.push(entity)` over
                         // an empty `Vec` is where its element is decided.
                         let args: Vec<&syn::Expr> = call.args.iter().collect();
-                        let through = self.receiver_unsolved(&call.receiver);
-                        *self.constraining_through.borrow_mut() = through;
-                        self.constrain_arguments(&self.registry.method_param_types(&found), &args);
-                        *self.constraining_through.borrow_mut() = None;
-                        self.close_with_expectation(found.ret, expected)
+                        let declared = self.declared_arguments(&found, &call.receiver);
+                        self.constrain_arguments(&declared, &args);
+                        let ret =
+                            self.undecided_result(call.method.span(), found.contested, found.ret);
+                        self.close_with_expectation(ret, expected)
                     })
             }
 
@@ -339,6 +334,14 @@ impl<'a> TypeContext<'a> {
                 let operand = self.resolve_expr_expecting(&unary.expr, expected)?;
                 if matches!(operand.peel_refs(), Ty::Prim(_)) {
                     return Ok(operand.peel_refs().clone());
+                }
+                // `-3` is Rust's `{integer}` exactly as `3` is: negation does
+                // not decide the width. Refusing it here left `let mut x = -3;
+                // x = -4i64` writing a JavaScript number and then a BigInt.
+                if let Ty::Var(id) = operand.peel_refs() {
+                    if self.vars.borrow().kind_of(*id).is_some() {
+                        return Ok(operand.peel_refs().clone());
+                    }
                 }
                 let trait_path = match unary.op {
                     syn::UnOp::Neg(_) => "std::ops::Neg",
@@ -484,31 +487,9 @@ impl<'a> TypeContext<'a> {
             // Every arm of a `match` and both branches of an `if` have the same
             // type in Rust, so the first one that is not a divergence answers
             // for all of them.
-            syn::Expr::Match(m) => m
-                .arms
-                .iter()
-                .find_map(|arm| {
-                    self.resolve_expr_expecting(&arm.body, expected)
-                        .ok()
-                        .filter(|t| *t != Ty::Never)
-                })
-                .ok_or_else(|| {
-                    self.refuse(expr.span(), "no arm of this match has a type the engine could read")
-                }),
+            syn::Expr::Match(m) => self.match_type(m, expected),
 
-            syn::Expr::If(if_expr) => {
-                let then = self.resolve_block_expecting(&if_expr.then_branch, expected);
-                if let Ok(ty) = &then {
-                    if *ty != Ty::Never {
-                        return then;
-                    }
-                }
-                match &if_expr.else_branch {
-                    Some((_, other)) => self.resolve_expr_expecting(other, expected),
-                    // An `if` with no `else` is the unit type.
-                    None => Ok(Ty::Unit),
-                }
-            }
+            syn::Expr::If(if_expr) => self.if_type(if_expr, expected),
 
             syn::Expr::Macro(mac) => self.macro_type(&mac.mac, expected),
 
@@ -531,7 +512,7 @@ impl<'a> TypeContext<'a> {
         self.resolve_block_expecting(block, None)
     }
 
-    fn resolve_block_expecting(
+    pub(super) fn resolve_block_expecting(
         &self,
         block: &syn::Block,
         expected: Option<&Ty>,
@@ -600,17 +581,10 @@ impl<'a> TypeContext<'a> {
             return Ok(Ty::Prim(prim));
         }
 
-        // A unit enum variant written as a path is a value of its enum.
-        if let Some((id, _)) = self.registry.lookup_variant(self.module, &segments) {
-            let params = self
-                .registry
-                .def(id)
-                .map(|d| d.type_params.clone())
-                .unwrap_or_default();
-            return Ok(Ty::Named {
-                id,
-                args: params.into_iter().map(Ty::Param).collect(),
-            });
+        // A unit enum variant and a unit struct are each written as a bare path
+        // and are values of the type that declares them.
+        if let Some(ty) = self.registry.type_written_as_a_value(self.module, &segments) {
+            return Ok(ty);
         }
 
         match self.registry.lookup(self.module, Ns::Value, &segments) {

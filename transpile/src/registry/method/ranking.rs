@@ -5,7 +5,10 @@
 //! no first-match tie-break. What ranks candidates ACROSS the deref chain is
 //! `walk_chain`, which prefers one that applies outright.
 
-use super::{AutoRef, Callee, MethodError, Pick, Probe, Ty};
+use super::{
+    AutoRef, Callee, DerefStep, MethodError, MethodResolution, Obligation, Pick, Probe, Ty,
+    Undecided,
+};
 
 impl Probe<'_> {
     /// The one method that answers at this receiver and borrow, or nothing.
@@ -114,5 +117,72 @@ impl Probe<'_> {
                 candidates: picks.into_iter().map(|p| p.callee).collect(),
             }),
         }
+    }
+
+    /// The first step of the deref chain that answers to `name`, preferring a
+    /// candidate that applies outright.
+    ///
+    /// `B` not meeting `Red` is a fact, so `w.go()` on a `Wrap<B>` reaches
+    /// `Inner::go` through `Deref`. An unknown standing where `B` will be is a
+    /// question the engine has not closed, so an unsettled candidate stops the
+    /// walk at its own depth and its obligation travels with the answer.
+    pub(super) fn walk_chain(
+        &self,
+        candidates: &[Ty],
+        steps: &[DerefStep],
+        name: &str,
+        explicit: &[Ty],
+        undecided: &[Obligation],
+        in_scope_only: bool,
+    ) -> Result<Option<MethodResolution>, MethodError> {
+        let mut deferred: Option<MethodResolution> = None;
+        let mut unsettled_at: Option<usize> = None;
+        let mut contested = false;
+        'chain: for (depth, candidate) in candidates.iter().enumerate() {
+            for autoref in [AutoRef::None, AutoRef::Shared, AutoRef::Mut] {
+                let found = self.pick(candidate, autoref, name, explicit, in_scope_only)?;
+                let Some(pick) = found else { continue };
+                // Past an unsettled candidate the walk only counts: a second
+                // answer here means which method Rust calls is decided by the
+                // bound, so the caller must not read this call's result yet.
+                if unsettled_at.is_some_and(|at| depth > at) {
+                    contested = true;
+                    break 'chain;
+                }
+                let ret = self.normalize(&pick.ret);
+                let outright = pick.obligations.is_empty();
+                let unsettled = pick
+                    .obligations
+                    .iter()
+                    .any(|o| o.reason == Undecided::Unsettled);
+                let mut obligations = undecided.to_vec();
+                obligations.extend(pick.obligations);
+                let out_of_scope = (!self.trait_in_scope(&pick.callee))
+                    .then(|| self.trait_of(&pick.callee))
+                    .flatten();
+                let found = MethodResolution {
+                    steps: steps[..depth].to_vec(),
+                    autoref,
+                    callee: pick.callee,
+                    subst: pick.subst,
+                    ret,
+                    adjusted: autoref.apply(candidate),
+                    obligations,
+                    out_of_scope,
+                    contested: false,
+                };
+                if outright {
+                    return Ok(Some(found));
+                }
+                if unsettled {
+                    unsettled_at.get_or_insert(depth);
+                }
+                deferred.get_or_insert(found);
+            }
+        }
+        if let Some(found) = &mut deferred {
+            found.contested = contested;
+        }
+        Ok(deferred)
     }
 }

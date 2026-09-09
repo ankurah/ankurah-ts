@@ -1,6 +1,6 @@
 // MIRRORS: ankurah/core/src/peer_subscription/server.rs
 import { Struct, Result, OwnedClosure, AnyhowError, dropOwned, tracing, unsupported, iterFilterMap, HashMap } from '@ankurah/base';
-import { Attested, CollectionId, EntityId, Event, KnownEntity, NodeResponseBody, NodeUpdateBody, QueryId, SubscriptionUpdateItem, UpdateContent } from '@ankurah/proto';
+import { Attested, CollectionId, EntityId, Event, KnownEntity, NodeResponseBody, NodeUpdateBody, QueryId, StateFragment, SubscriptionUpdateItem, UpdateContent } from '@ankurah/proto';
 import { SubscriptionGuard } from '@ankurah/signals';
 import { Entity } from '../entity';
 import { SubscriptionError } from '../error';
@@ -203,38 +203,44 @@ function convertItem<SE, PA>(node: Node<SE, PA>, peerId: EntityId, item: Reactor
       }
     })();
     if ((_m0 as any)?.$jump === 'return') return (_m0 as any).$value;
-    const entityState = (_m0 as any);
     let _moved1 = false;
-    const attestation = node.deref().value.policyAgent.attestState(node, entityState);
+    const entityState = (_m0 as any);
     try {
-      _moved1 = true;
       let _moved2 = false;
-      const attestedState = Attested.opt(entityState, attestation);
+      const attestation = node.deref().value.policyAgent.attestState(node, entityState);
       try {
+        _moved1 = true;
+        _moved2 = true;
         let _moved3 = false;
-        const attestedEvents = item.events;
+        const attestedState = Attested.opt(entityState, attestation);
         try {
-          _moved2 = true;
-          _moved3 = true;
           let _moved4 = false;
-          const content = new UpdateContent('StateAndEvent', { _0: attestedState, _1: [...attestedEvents].map((e) => e) });
+          const attestedEvents = item.events;
           try {
-            const predicateRelevance = unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into');
-            const _b5 = item.entity.id();
-            const _b6 = item.entity.collection().clone();
+            _moved3 = true;
             _moved4 = true;
-            return new SubscriptionUpdateItem(_b5, _b6, content, predicateRelevance);
+            let _moved5 = false;
+            const content = new UpdateContent('StateAndEvent', { _0: StateFragment.from(attestedState), _1: [...attestedEvents].map((e) => e) });
+            try {
+              const predicateRelevance = unsupported('`collect` builds whatever its target type names, and the engine could not name the type this one is collected into');
+              const _b6 = item.entity.id();
+              const _b7 = item.entity.collection().clone();
+              _moved5 = true;
+              return new SubscriptionUpdateItem(_b6, _b7, content, predicateRelevance);
+            } finally {
+              if (!_moved5) content.drop();
+            }
           } finally {
-            if (!_moved4) content.drop();
+            if (!_moved4) dropOwned(attestedEvents);
           }
         } finally {
-          if (!_moved3) dropOwned(attestedEvents);
+          if (!_moved3) attestedState.drop();
         }
       } finally {
-        if (!_moved2) attestedState.drop();
+        if (!_moved2) dropOwned(attestation);
       }
     } finally {
-      if (!_moved1) dropOwned(attestation);
+      if (!_moved1) entityState.drop();
     }
   } finally {
     item.drop();

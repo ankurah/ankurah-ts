@@ -121,18 +121,31 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
                         _moved1 = true;
                         _moved2 = true;
                         _moved8 = true;
+                        let _moved16 = false;
                         const node = new Node(Arc.new(new NodeInner(id, false, collections, entityset, _b9, _b11, _b13, reactor, policyAgent, systemManager, subscriptionRelay, _b15)));
-                        {
-                          const _v = node.subscriptionRelay;
-                          if (_v != null) {
-                            const relay = _v;
-                            const weakNode = node.weak();
-                            if (relay.setNode(Arc.new(weakNode)).isErr()) {
-                              tracing.warn('Failed to set message sender for subscription relay');
+                        try {
+                          {
+                            const _v = node.deref().value.subscriptionRelay;
+                            if (_v != null) {
+                              const relay = _v;
+                              const weakNode = node.weak();
+                              let _c18;
+                              const _t17 = relay.setNode(Arc.new(weakNode));
+                              try {
+                                _c18 = _t17.isErr();
+                              } finally {
+                                _t17.drop();
+                              }
+                              if (_c18) {
+                                tracing.warn('Failed to set message sender for subscription relay');
+                              }
                             }
                           }
+                          _moved16 = true;
+                          return node;
+                        } finally {
+                          if (!_moved16) node.drop();
                         }
-                        return node;
                       } finally {
                         if (!_moved14) dropOwned(_b13);
                       }

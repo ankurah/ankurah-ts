@@ -148,18 +148,19 @@ fn an_unsuffixed_literal_nothing_decides_is_the_width_rust_defaults_to() {
 
 #[test]
 fn a_literal_may_not_stand_for_a_type_that_is_not_a_number() {
-    // Rust's `{integer}` binds only an integer, which is what keeps an
-    // unrelated constraint from making a literal the unit type.
-    let c = Fixture::build(&[("lib.rs", "pub struct S;")]);
-    let mut cx = c.context("lib.rs", None);
-    cx.push_fn(vec![]);
-    let block = solve(&mut cx, "{ let n = 0; let m: () = n; m }");
-    let mut found = Literals(Vec::new());
-    found.visit_block(&block);
-    assert_eq!(
-        cx.solved(&at_site(&cx.vars.borrow(), found.0[0])),
-        Ty::Prim(Prim::I32)
-    );
+    // Rust's `{integer}` binds only an integer, and `let m: () = n` asking it
+    // to be the unit type is E0308. The restriction is a fact, so the site says
+    // so rather than quietly letting the literal take the fallback.
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub fn count() -> () {\n    \
+             let n = 0;\n    \
+             let m: () = n;\n    \
+             m\n\
+         }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert_eq!(contradictions(&c).len(), 1, "{:?}", c.messages());
 }
 
 #[test]
@@ -267,4 +268,281 @@ fn a_boxed_slice_stands_where_a_slice_is_declared() {
     )]);
     let _ = c.emitted("lib.rs");
     assert!(contradictions(&c).is_empty(), "{:?}", c.messages());
+}
+
+/// The three shapes whose provenance the solve used to lose, each with one
+/// contradiction and one poisoned element.
+const SHAPES: &str = "pub struct Holder { pub values: Vec<usize> }\n\
+     pub fn takes_usizes(values: &Vec<usize>) -> usize { values.len() }\n";
+
+#[test]
+fn two_assignments_that_disagree_are_said_once_and_poison_the_element() {
+    // The place and the value are one type, and the second assignment cannot
+    // be that type. The width the first one bound is not an answer the engine
+    // can defend, so it stops standing for anything.
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub fn widths() -> usize {\n    \
+             let mut xs = Vec::new();\n    \
+             xs = vec![1u32];\n    \
+             xs = vec![2usize];\n    \
+             xs.len()\n\
+         }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert_eq!(contradictions(&c).len(), 1, "{:?}", c.messages());
+
+    let mut cx = c.context("lib.rs", None);
+    cx.push_fn(vec![]);
+    let block = solve(
+        &mut cx,
+        "{ let mut xs = Vec::new(); xs = vec![1u32]; xs = vec![2usize]; }",
+    );
+    let element = match &block.stmts[0] {
+        syn::Stmt::Local(local) => at_site(
+            &cx.vars.borrow(),
+            syn::spanned::Spanned::span(&local.init.as_ref().unwrap().expr),
+        ),
+        other => panic!("{:?}", other),
+    };
+    assert_eq!(cx.solved(&element), element, "the element still answers");
+}
+
+#[test]
+fn a_third_push_says_nothing_new_after_the_second_contradicted() {
+    // Every constraint reaching a poisoned unknown fails for the one reason
+    // already reported, so the third push is not a second finding.
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub fn widths() -> usize {\n    \
+             let mut xs = Vec::new();\n    \
+             xs.push(1u32);\n    \
+             xs.push(2usize);\n    \
+             xs.push(3u64);\n    \
+             xs.len()\n\
+         }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert_eq!(contradictions(&c).len(), 1, "{:?}", c.messages());
+}
+
+#[test]
+fn a_push_and_a_declared_parameter_that_disagree_poison_the_element() {
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        &format!(
+            "{}pub fn widths() -> usize {{\n    \
+                 let mut xs = Vec::new();\n    \
+                 xs.push(1u32);\n    \
+                 takes_usizes(&xs)\n\
+             }}",
+            SHAPES
+        ),
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert_eq!(contradictions(&c).len(), 1, "{:?}", c.messages());
+}
+
+#[test]
+fn a_push_and_a_field_declaration_that_disagree_poison_the_element() {
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        &format!(
+            "{}pub fn widths() -> Holder {{\n    \
+                 let mut xs = Vec::new();\n    \
+                 xs.push(1u32);\n    \
+                 Holder {{ values: xs }}\n\
+             }}",
+            SHAPES
+        ),
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert_eq!(contradictions(&c).len(), 1, "{:?}", c.messages());
+}
+
+#[test]
+fn a_nested_argument_that_disagrees_poisons_the_element() {
+    // The disagreement is one call inside another: the constraint still stands
+    // on the collection's own element and says so.
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        &format!(
+            "{}pub fn widths() -> usize {{\n    \
+                 let mut xs = Vec::new();\n    \
+                 xs.push(1u32);\n    \
+                 takes_usizes(&xs) + takes_usizes(&xs)\n\
+             }}",
+            SHAPES
+        ),
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert_eq!(contradictions(&c).len(), 1, "{:?}", c.messages());
+}
+
+#[test]
+fn a_literal_asked_to_be_an_integer_and_a_float_says_so() {
+    // `let mut x = 1; x = 2.0` is E0308. Both sides are unknowns the solve has
+    // not decided, so nothing about the types tells them apart; their kinds do.
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub fn widths() -> f64 {\n    \
+             let mut x = 1;\n    \
+             x = 2.0;\n    \
+             x + 1.0f64\n\
+         }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert_eq!(contradictions(&c).len(), 1, "{:?}", c.messages());
+}
+
+#[test]
+fn a_comparison_gives_its_literal_the_other_sides_width() {
+    // `taken < wanted` is what says `taken` counts in `u32`, so the increment
+    // under it is checked at that width rather than at the fallback's.
+    let c = Fixture::build(&[("lib.rs", "pub struct S;")]);
+    let mut cx = c.context("lib.rs", None);
+    cx.push_fn(vec![("wanted".to_string(), Ty::Prim(Prim::U32))]);
+    let block = solve(
+        &mut cx,
+        "{ let mut taken = 0; while taken < wanted { taken += 1; } }",
+    );
+    let mut found = Literals(Vec::new());
+    found.visit_block(&block);
+    assert_eq!(
+        cx.solved(&at_site(&cx.vars.borrow(), found.0[0])),
+        Ty::Prim(Prim::U32)
+    );
+}
+
+#[test]
+fn two_arms_that_answer_with_different_widths_say_so() {
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub fn pick(flag: bool) -> u8 {\n    \
+             match flag { true => 1u8, false => 2u16 }\n\
+         }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert_eq!(contradictions(&c).len(), 1, "{:?}", c.messages());
+}
+
+#[test]
+fn two_branches_that_answer_with_different_widths_say_so() {
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub fn pick(flag: bool) -> u8 {\n    \
+             if flag { 1u8 } else { 2u16 }\n\
+         }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert_eq!(contradictions(&c).len(), 1, "{:?}", c.messages());
+}
+
+#[test]
+fn a_negated_literal_is_the_same_unknown_the_bare_one_is() {
+    // `-3` is Rust's `{integer}` exactly as `3` is, so the assignment below it
+    // decides the width and neither side is a contradiction.
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub fn widths() -> i64 {\n    \
+             let mut x = -3;\n    \
+             x = -4i64;\n    \
+             x\n\
+         }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert!(contradictions(&c).is_empty(), "{:?}", c.messages());
+}
+
+#[test]
+fn a_holder_returned_as_its_payload_says_so() {
+    // `fn take(value: Arc<Inner>) -> Inner { value }` is E0308, and the emitted
+    // `return value` hands back the handle: `result.n` is undefined, because
+    // the payload is at `result.value`.
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "use std::sync::Arc;\n\
+         pub struct Inner { pub n: u32 }\n\
+         pub fn take(value: Arc<Inner>) -> Inner { value }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert_eq!(contradictions(&c).len(), 1, "{:?}", c.messages());
+}
+
+#[test]
+fn a_holder_borrowed_where_its_payload_is_borrowed_does_not() {
+    // Rust's deref coercion is a REFERENCE coercion, and this is it.
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "use std::sync::Arc;\n\
+         pub struct Inner { pub n: u32 }\n\
+         pub fn read(value: &Arc<Inner>) -> u32 { take(value) }\n\
+         fn take(value: &Inner) -> u32 { value.n }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert!(contradictions(&c).is_empty(), "{:?}", c.messages());
+}
+
+#[test]
+fn a_tuple_structs_own_name_builds_one() {
+    // `StateBuffers(map)` is the constructor. Refusing it left the local
+    // untyped, and the field it was written into compared the struct with what
+    // it wraps.
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "use std::collections::BTreeMap;\n\
+         pub struct Buffers(pub BTreeMap<String, u32>);\n\
+         pub struct Held { pub buffers: Buffers }\n\
+         pub fn build(map: BTreeMap<String, u32>) -> Held {\n    \
+             let buffers = Buffers(map);\n    \
+             Held { buffers }\n\
+         }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert!(
+        !c.messages()
+            .iter()
+            .any(|m| m.contains("constrained to be the same type")
+                || m.contains("does not name a function here")),
+        "{:?}",
+        c.messages()
+    );
+}
+
+#[test]
+fn a_bound_reads_through_the_type_as_written_and_no_further() {
+    // Only the by-value `IntoIterator` impl exists, so `&Source` supplies no
+    // item at all. Reading the owned impl through the reference bound `Item` to
+    // what the caller still owns.
+    let c = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Tag { pub n: u32 }\n\
+         pub struct Source { pub tags: Vec<Tag> }\n\
+         impl IntoIterator for Source {\n    \
+             type Item = Tag;\n    \
+             type IntoIter = std::vec::IntoIter<Tag>;\n    \
+             fn into_iter(self) -> Self::IntoIter { self.tags.into_iter() }\n\
+         }\n\
+         pub struct Bag { pub held: Vec<Tag> }\n\
+         impl Bag {\n    \
+             pub fn from_items<I: IntoIterator<Item = Tag>>(items: I) -> Bag {\n        \
+                 Bag { held: items.into_iter().collect() }\n    \
+             }\n\
+         }",
+    )]);
+    let owned = c.named("lib.rs", "Source", vec![]);
+    let borrowed = Ty::Ref {
+        mutable: false,
+        inner: Box::new(owned.clone()),
+    };
+    let probe = c.probe("lib.rs");
+    let item = |ty: &Ty| {
+        probe.normalize(&Ty::Assoc {
+            base: Box::new(ty.clone()),
+            trait_: None,
+            name: "Item".to_string(),
+        })
+    };
+    assert_eq!(item(&owned), c.named("lib.rs", "Tag", vec![]));
+    assert_ne!(item(&borrowed), c.named("lib.rs", "Tag", vec![]));
 }

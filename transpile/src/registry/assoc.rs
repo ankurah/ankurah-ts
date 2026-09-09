@@ -6,6 +6,7 @@
 
 use super::impls::{head_of, ImplId};
 use super::method::MAX_BOUND_DEPTH;
+use super::bounds::Undecided;
 use super::Probe;
 use crate::ty::{TraitRef, Ty};
 
@@ -297,6 +298,20 @@ impl Probe<'_> {
             Some(BoundAssoc::Open) => return None,
             None => {}
         }
+        // An impl whose bound the solve has not settled is a second chance:
+        // `impl<A: Step> Iterator for RangeInclusive<A>` cannot prove `?0: Step`
+        // while `?0` is open, and `for id in 1..=6` then settled nothing.
+        self.project_supplied(base, trait_, name, false)
+            .or_else(|| self.project_supplied(base, trait_, name, true))
+    }
+
+    fn project_supplied(
+        &self,
+        base: &Ty,
+        trait_: Option<&TraitRef>,
+        name: &str,
+        admit_unsettled: bool,
+    ) -> Option<Ty> {
         let mut found: Option<Ty> = None;
         let ids: Vec<ImplId> = match trait_ {
             Some(tr) => self.reg.impls().of_trait(tr.id).to_vec(),
@@ -338,6 +353,9 @@ impl Probe<'_> {
             // different answers is no answer.
             match self.bounds_hold(&def.bounds, &subst) {
                 Some(deferred) if deferred.is_empty() => {}
+                Some(deferred)
+                    if admit_unsettled
+                        && deferred.iter().all(|o| o.reason == Undecided::Unsettled) => {}
                 _ => continue,
             }
             if let Some(tr) = trait_ {

@@ -3,6 +3,7 @@
 /// What a call resolves to, and what it wants of its arguments.
 pub(crate) mod arguments;
 mod awaiting;
+mod branches;
 pub(crate) mod calls;
 pub mod closures;
 #[cfg(test)]
@@ -24,6 +25,7 @@ mod prepass;
 #[cfg(test)]
 mod prepass_tests;
 mod scope;
+mod mismatch;
 mod vars;
 #[cfg(test)]
 mod await_tests;

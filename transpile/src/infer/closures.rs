@@ -189,7 +189,7 @@ impl TypeContext<'_> {
         closure: &syn::ExprClosure,
         bindings: &[(String, Option<Ty>)],
     ) -> Option<Ty> {
-        self.with_closure_params(bindings, || match &*closure.body {
+        self.with_question_scope(bindings, || match &*closure.body {
             syn::Expr::Block(block) => self.block_tail_type(&block.block).ok(),
             other => self.resolve_expr(other).ok(),
         })
@@ -234,23 +234,27 @@ pub(crate) fn names_bound(pat: &syn::Pat, ty: Option<&Ty>) -> Vec<(String, Optio
 }
 
 impl TypeContext<'_> {
-    /// Ask something with a closure's parameters in scope, then take them back
-    /// out again whatever the answer was.
-    pub(super) fn with_closure_params<T>(
+    /// Ask something with these names bound, then take them back out again
+    /// whatever the answer was.
+    ///
+    /// A closure's parameters and a match arm's bindings are in scope only for
+    /// the question asked about the body under them, and the walk that asks
+    /// holds the context by shared reference, so it pushes no scope frame.
+    pub(super) fn with_question_scope<T>(
         &self,
         params: &[(String, Option<Ty>)],
         ask: impl FnOnce() -> T,
     ) -> T {
-        self.closure_params.borrow_mut().push(params.to_vec());
+        self.question_scope.borrow_mut().push(params.to_vec());
         let answer = ask();
-        self.closure_params.borrow_mut().pop();
+        self.question_scope.borrow_mut().pop();
         answer
     }
 
-    /// What a closure parameter opened by `with_closure_params` holds, and
-    /// whether the name is one of them at all.
-    pub(super) fn closure_param(&self, name: &str) -> Option<Option<Ty>> {
-        self.closure_params
+    /// What a name opened by `with_question_scope` holds, and whether it is one
+    /// of them at all.
+    pub(super) fn question_binding(&self, name: &str) -> Option<Option<Ty>> {
+        self.question_scope
             .borrow()
             .iter()
             .rev()

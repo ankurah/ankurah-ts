@@ -25,6 +25,27 @@ use crate::ty::{unify, Ty};
 impl TypeContext<'_> {
     // ── Calls ──────────────────────────────────────────────────────────
 
+    /// What a resolved method declares each of its arguments to be.
+    ///
+    /// Read over the receiver AS WRITTEN while the SOLVE runs, so a constraint
+    /// that fails names the unknown it stood on: a parameter substituted from
+    /// the round's own answer says only `u32`, and poisons nothing. The walk
+    /// that writes the body reads a settled table and takes the settled answer.
+    pub(super) fn declared_arguments(
+        &self,
+        found: &MethodResolution,
+        receiver: &syn::Expr,
+    ) -> Vec<Ty> {
+        let solving = self.vars.borrow().solving();
+        match solving
+            .then(|| self.resolve_expr_as_written(receiver).ok())
+            .flatten()
+        {
+            Some(written) => self.registry.method_param_types_as_written(found, &written),
+            None => self.registry.method_param_types(found),
+        }
+    }
+
     /// Which function `receiver.name(..)` calls, and what it hands back.
 
     /// The same, with the type arguments a turbofish wrote. `collect::<Vec<_>>()`
@@ -205,6 +226,12 @@ impl TypeContext<'_> {
         // declared return type; what its parameters say about the arguments is
         // read here, because nothing else reads them.
         self.constrain_free_arguments(call);
+        // A tuple struct's own name IS its constructor: `StateBuffers(map)`
+        // builds one. Refusing it left the local untyped, and the field it was
+        // written into then compared the struct with what it wraps.
+        if let Some(ty) = self.registry.tuple_struct_constructed(self.module, &segments) {
+            return Ok(ty);
+        }
         match self.registry.lookup(self.module, Ns::Value, &segments) {
             Ok(Some(Def::Value(id))) => match self.registry.value(id).and_then(|v| v.ty.clone()) {
                 Some(ty) => Ok(ty),
@@ -284,6 +311,7 @@ impl TypeContext<'_> {
         // Through the table first: an impl is matched by a walk with its own
         // unknowns, which cannot follow this body's, so a variable the solve
         // has settled has to arrive as what it stands for.
+        let as_written = ty;
         let ty = &self.solved(ty);
         let probe = self.probe();
         let mut inherent: Option<(Ty, Vec<Ty>)> = None;
@@ -299,6 +327,13 @@ impl TypeContext<'_> {
             }
             let Some(subst) = def.match_self(ty) else {
                 continue;
+            };
+            // While the SOLVE runs, bound to the arguments AS WRITTEN, so
+            // `Vec::new()` answers `Vec<?0>` in every round and a constraint
+            // below it that fails says which unknown it stood on.
+            let subst = match self.vars.borrow().solving() {
+                true => def.match_self(as_written).unwrap_or(subst),
+                false => subst,
             };
             let ret = probe.normalize(&sig.ret.substitute(&subst));
             // Through the bound, because a closure argument reads its

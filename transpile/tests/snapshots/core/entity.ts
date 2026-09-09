@@ -60,8 +60,15 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
         const stateBuffer = _r0.unwrap();
         stateBuffers.set(name, stateBuffer);
       }
+      let _moved1 = false;
       const stateBuffers_1 = new StateBuffers(stateBuffers);
-      return Result.Ok(new State(stateBuffers_1, state.value.head.clone()));
+      try {
+        const _b2 = state.value.head.clone();
+        _moved1 = true;
+        return Result.Ok(new State(stateBuffers_1, _b2));
+      } finally {
+        if (!_moved1) stateBuffers_1.drop();
+      }
     } finally {
       state.drop();
     }
@@ -164,18 +171,23 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
           return Result.Ok(null);
         } else {
           _moved0 = true;
+          let _moved3 = false;
           const operations_1 = new OperationSet(operations);
-          const _b3 = this.deref().id;
-          let _moved5 = false;
-          const _b4 = this.deref().collection.clone();
           try {
-            const _b6 = state.value.head.clone();
-            _moved5 = true;
-            _moved0 = true;
-            const event = new Event(_b4, _b3, operations_1, _b6);
-            return Result.Ok(event);
+            const _b4 = this.deref().id;
+            let _moved6 = false;
+            const _b5 = this.deref().collection.clone();
+            try {
+              const _b7 = state.value.head.clone();
+              _moved6 = true;
+              _moved3 = true;
+              const event = new Event(_b5, _b4, operations_1, _b7);
+              return Result.Ok(event);
+            } finally {
+              if (!_moved6) dropOwned(_b5);
+            }
           } finally {
-            if (!_moved5) dropOwned(_b4);
+            if (!_moved3) operations_1.drop();
           }
         }
       } finally {

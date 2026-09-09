@@ -19,8 +19,38 @@ impl TypeContext<'_> {
     /// use of each name.
     pub fn bind_pattern(&mut self, pat: &syn::Pat, ty: Option<&Ty>) -> Vec<String> {
         let mut untyped = Vec::new();
-        self.bind_pattern_into(pat, ty, Mode::Move, &mut untyped);
+        for (name, ty) in self.names_a_pattern_binds(pat, ty) {
+            match ty {
+                Some(ty) => self.bind(&name, ty),
+                None => {
+                    self.bind_untyped(&name);
+                    untyped.push(name);
+                }
+            }
+        }
         untyped
+    }
+
+    /// Every name a pattern binds against a value, and the type each takes.
+    ///
+    /// Asked without binding anything, so a question about one match arm can be
+    /// answered with that arm's own names in scope.
+    pub(super) fn names_a_pattern_binds(
+        &self,
+        pat: &syn::Pat,
+        ty: Option<&Ty>,
+    ) -> Vec<(String, Option<Ty>)> {
+        // A pattern that takes a value APART needs the shape, and an unknown
+        // has none until the table says what it stands for. A plain name keeps
+        // the type as written, so a constraint on it names the unknown.
+        let solved = match (pat, ty) {
+            (syn::Pat::Ident(ident), Some(ty)) if ident.subpat.is_none() => Some(ty.clone()),
+            (_, Some(ty)) => Some(self.solved(ty)),
+            (_, None) => None,
+        };
+        let mut bound = Vec::new();
+        self.bind_pattern_into(pat, solved.as_ref(), Mode::Move, &mut bound);
+        bound
     }
 
     /// Bind one pattern against one value.
@@ -32,11 +62,11 @@ impl TypeContext<'_> {
     /// explicit `&pat` consumes exactly one layer and puts the mode back, and
     /// `ref x` binds a reference whatever the mode is.
     fn bind_pattern_into(
-        &mut self,
+        &self,
         pat: &syn::Pat,
         ty: Option<&Ty>,
         mode: Mode,
-        untyped: &mut Vec<String>,
+        bound: &mut Vec<(String, Option<Ty>)>,
     ) {
         match pat {
             syn::Pat::Ident(ident) => {
@@ -50,22 +80,16 @@ impl TypeContext<'_> {
                     }
                 }
                 if let Some(sub) = &ident.subpat {
-                    self.bind_pattern_into(&sub.1, ty, mode, untyped);
+                    self.bind_pattern_into(&sub.1, ty, mode, bound);
                 }
                 // `ref x` and `ref mut x` say the borrow outright; otherwise the
                 // default binding mode says it.
-                let bound = match (&ident.by_ref, ident.mutability.is_some()) {
+                let taken = match (&ident.by_ref, ident.mutability.is_some()) {
                     (Some(_), mutable) => mode_of(mutable),
                     (None, _) => mode,
                 };
                 let local = name_map::to_camel_case(&name);
-                match ty.map(|t| bound.apply(t)) {
-                    Some(ty) => self.bind(&local, ty),
-                    None => {
-                        self.bind_untyped(&local);
-                        untyped.push(local);
-                    }
-                }
+                bound.push((local, ty.map(|t| taken.apply(t))));
             }
 
             // `&pat` matches the reference itself: one layer off, and the mode
@@ -77,19 +101,19 @@ impl TypeContext<'_> {
                     // default mode is what `match &v { &x => .. }` does.
                     other => other.cloned(),
                 };
-                self.bind_pattern_into(&r.pat, inner.as_ref(), Mode::Move, untyped)
+                self.bind_pattern_into(&r.pat, inner.as_ref(), Mode::Move, bound)
             }
 
-            syn::Pat::Paren(p) => self.bind_pattern_into(&p.pat, ty, mode, untyped),
+            syn::Pat::Paren(p) => self.bind_pattern_into(&p.pat, ty, mode, bound),
 
             syn::Pat::Type(t) => {
                 // A written type is the whole answer, borrows included.
                 let written = self.resolve_written_type(&t.ty).ok();
                 match written {
                     Some(written) => {
-                        self.bind_pattern_into(&t.pat, Some(&written), Mode::Move, untyped)
+                        self.bind_pattern_into(&t.pat, Some(&written), Mode::Move, bound)
                     }
-                    None => self.bind_pattern_into(&t.pat, ty, mode, untyped),
+                    None => self.bind_pattern_into(&t.pat, ty, mode, bound),
                 }
             }
 
@@ -97,7 +121,7 @@ impl TypeContext<'_> {
             // the same value.
             syn::Pat::Or(or_pat) => {
                 for case in &or_pat.cases {
-                    self.bind_pattern_into(case, ty, mode, untyped);
+                    self.bind_pattern_into(case, ty, mode, bound);
                 }
             }
 
@@ -108,7 +132,7 @@ impl TypeContext<'_> {
                     _ => None,
                 };
                 for (i, elem) in t.elems.iter().enumerate() {
-                    self.bind_pattern_into(elem, elems.as_ref().map(|e| &e[i]), mode, untyped);
+                    self.bind_pattern_into(elem, elems.as_ref().map(|e| &e[i]), mode, bound);
                 }
             }
 
@@ -120,7 +144,7 @@ impl TypeContext<'_> {
                         .as_ref()
                         .and_then(|f| f.iter().find(|(n, _)| *n == format!("_{}", i)))
                         .map(|(_, t)| t.clone());
-                    self.bind_pattern_into(elem, field.as_ref(), mode, untyped);
+                    self.bind_pattern_into(elem, field.as_ref(), mode, bound);
                 }
             }
 
@@ -133,7 +157,7 @@ impl TypeContext<'_> {
                         .as_ref()
                         .and_then(|f| f.iter().find(|(n, _)| *n == name))
                         .map(|(_, t)| t.clone());
-                    self.bind_pattern_into(&field.pat, found.as_ref(), mode, untyped);
+                    self.bind_pattern_into(&field.pat, found.as_ref(), mode, bound);
                 }
             }
 
@@ -141,7 +165,7 @@ impl TypeContext<'_> {
                 let (scrutinee, mode) = peel(ty, mode);
                 let elem = scrutinee.as_ref().and_then(|t| self.element_of(t));
                 for pat in &slice.elems {
-                    self.bind_pattern_into(pat, elem.as_ref(), mode, untyped);
+                    self.bind_pattern_into(pat, elem.as_ref(), mode, bound);
                 }
             }
 
