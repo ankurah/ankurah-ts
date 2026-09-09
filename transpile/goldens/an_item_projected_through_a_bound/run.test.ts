@@ -1,8 +1,8 @@
 // Runs the emitted an_item_projected_through_a_bound against the runtime.
 //
-// Against 9099480's engine the holder's element is an unknown no constraint
-// binds — a bound and an argument are never the same type — so what `take`
-// hands back has no type and is released by nobody.
+// A bound and an argument are never the same type; what they agree on is what
+// the bound PROJECTS, so the holder's element is the item read out of the
+// argument and what `take` hands back is released.
 
 import { afterAll, expect, test } from 'bun:test';
 import { expectNoOwnershipReports } from './leaks.ts';

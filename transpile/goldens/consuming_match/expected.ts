@@ -109,7 +109,7 @@ export function untilFilled(slots: Slot[]): number {
           }
         },
         Empty: () => {
-          seen = checkedAdd(seen, 1, 'i32');
+          seen = checkedAdd(seen, 1, 'usize');
         },
       });
       if ((_m1 as any)?.$jump === 'break') break;
@@ -142,7 +142,7 @@ export function countEmpty(slots: Slot[]): number {
         Empty: () => {},
       });
       if ((_m1 as any)?.$jump === 'continue') continue;
-      seen = checkedAdd(seen, 1, 'i32');
+      seen = checkedAdd(seen, 1, 'usize');
     }
   } finally {
     dropOwned(_seq2.slice(_at3));

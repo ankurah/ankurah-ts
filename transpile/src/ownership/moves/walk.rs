@@ -54,8 +54,12 @@ impl Scan<'_> {
 
             // Awaiting a named future takes it by value, exactly as a
             // self-taking method does, and the emitter releases nothing after.
+            // An `await` the engine could not type takes nothing: there is no
+            // future there to consume, and the value is still the block's.
             syn::Expr::Await(await_expr) => {
-                self.moved(&await_expr.base, at, out);
+                if !self.consumes.refuses_await(await_expr) {
+                    self.moved(&await_expr.base, at, out);
+                }
                 self.walk(&await_expr.base, at, out);
             }
 

@@ -1,8 +1,7 @@
 // Runs the emitted a_default_the_body_overrules against the runtime.
 //
-// Against 8ab991f's engine the declaration's default is applied before the
-// arguments are read, so `B` answers `()`: `s.b.wrapping_add(100)` is
-// dispatched by name on a value that has no such method.
+// A declaration's default is applied after the arguments are read, so `B` is
+// what the body says and `s.b.wrapping_add(100)` resolves on it.
 
 import { afterAll, expect, test } from 'bun:test';
 import { expectNoOwnershipReports } from './leaks.ts';

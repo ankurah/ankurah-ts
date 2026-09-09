@@ -90,7 +90,7 @@ export function anyThenCount<I extends Iterable<Token>>(walk: SeqCursor<Token>):
 export function countRefs<I extends Iterable<Token>>(walk: SeqCursor<Token>): number {
   let n = 0;
   for (const _t of walk.takeRest()) {
-    n = checkedAdd(n, 1, 'i32');
+    n = checkedAdd(n, 1, 'usize');
   }
   return n;
 }

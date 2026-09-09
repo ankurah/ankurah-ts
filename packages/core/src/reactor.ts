@@ -349,7 +349,7 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
             }
           })();
           let _moved3 = false;
-          const allWatcherChanges = (await joinAll(evaluations)).intoIter().flatten();
+          const allWatcherChanges = [...(await joinAll(evaluations))].flat();
           try {
             let watcherSet = this._0.value.watcherSet.value.lock();
             try {

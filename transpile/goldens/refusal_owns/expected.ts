@@ -117,7 +117,7 @@ export function refusedInALoop(items: Token[][]): number {
       const rest = _seq1[_at2++];
       try {
         const _v = unsupported('`collect` into `Result<unknown[], unknown>` is a `FromIterator` the port has no construction for');
-        total = checkedAdd(total, 1, 'i32');
+        total = checkedAdd(total, 1, 'u32');
       } finally {
         dropOwned(rest);
       }

@@ -33,7 +33,7 @@ export function normalize(bounds: KeyBounds): [CanonicalRange, number, Value[]] 
                         lowerTuple.push(lowVal.clone());
                         upperTuple.push(highVal.clone());
                         eqPrefixValues.push(lowVal.clone());
-                        eqPrefixLen = checkedAdd(eqPrefixLen, 1, 'i32');
+                        eqPrefixLen = checkedAdd(eqPrefixLen, 1, 'usize');
                         continue;
                       }}}  }
               }  }

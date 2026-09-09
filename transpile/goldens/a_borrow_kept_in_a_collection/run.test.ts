@@ -1,8 +1,7 @@
 // Runs the emitted a_borrow_kept_in_a_collection against the runtime.
 //
-// Against 8ab991f's engine the constraint erases the `&` on the argument, so
-// `picked` reads as a collection of owned `Thing`s: the function releases what
-// the caller still owns and `run` releases it a second time.
+// A collection of borrows releases nothing: the `Thing`s belong to the caller,
+// and each is released once, by the caller.
 
 import { afterAll, expect, test } from 'bun:test';
 import { dropOwned } from '@ankurah/base';

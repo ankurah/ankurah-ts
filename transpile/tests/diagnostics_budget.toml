@@ -37,11 +37,11 @@ total = 62
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 1
 
 [ankql]
-total = 136
+total = 133
 
 [ankql.by_cause]
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 48
-"obligation deferred: X (the subject is still a type parameter)" = 18
+"obligation deferred: X (the subject is still a type parameter)" = 15
 "X converts the error from X to X through X, and the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 14
 "X is bound here but the engine could not type it" = 14
 "X is declared in another module, so this impl is written as module-level functions here rather than as methods on its class" = 6
@@ -63,7 +63,7 @@ total = 136
 "this closure's parameters are X, X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what they hold" = 1
 
 [signals]
-total = 115
+total = 112
 
 [signals.by_cause]
 "this closure owns X and is written as an X, which is not a bare callable" = 17
@@ -73,7 +73,6 @@ total = 115
 "X is bound here but the engine could not type it" = 8
 "this closure owns X, X and is written as an X, which is not a bare callable" = 8
 "X is declared in more than one module of this crate, and this file names it unqualified: the import binds one of them and a signature written against the other names the wrong class. The crate index tells them apart with an alias" = 7
-"obligation deferred: X (the subject is a type the engine has not settled)" = 6
 "path qualifiers std, sync, atomic are dropped by name" = 6
 "X is written on a value the engine could not type, so which conversion it performs is not known" = 5
 "path qualifiers std, sync are dropped by name" = 5
@@ -82,7 +81,9 @@ total = 115
 "X does not name a function here" = 3
 "path qualifiers std, marker are dropped by name" = 3
 "no method X on X" = 2
+"obligation deferred: X (the subject is a type the engine has not settled)" = 2
 "the callee is not a path, so nothing names what it calls" = 2
+"X between X and X resolves through X, and no impl in the table performs it" = 1
 "X does not name a value here" = 1
 "X for X emits a method called X, and something on this class already has that name, so this one is not written and every call to it goes to the other" = 1
 "X for X is written as a call to X, which is the name it is emitted under here, so writing it would be a method that calls itself" = 1
@@ -92,22 +93,23 @@ total = 115
 "this closure takes X by value and the engine could not type it, so it is left out of what the closure owns" = 1
 
 [core]
-total = 1556
+total = 1576
 
 [core.by_cause]
-"obligation deferred: X (the subject is still a type parameter)" = 252
+"obligation deferred: X (the subject is still a type parameter)" = 249
 "X is bound here but the engine could not type it" = 187
 "no method X on X" = 106
 "X has a type the engine cannot say owns anything, so nothing releases it" = 97
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 86
-"no X impl reaches X with the index written here" = 48
 "obligation deferred: X (the subject is a type the engine has not settled)" = 48
 "X converts the error from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 46
+"no X impl reaches X with the index written here" = 43
 "X does not name a function here" = 38
 "this X is written as a JSON literal rather than as one expression, and the hook reads the expression form only, so the value is X" = 36
 "X converts the error from X to X through X, and the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 32
 "X's X prints under Debug as whatever its X says, because X is a std type with no Debug rendering in the port" = 31
 "path qualifiers std are dropped by name" = 31
+"X grows or shrinks a byte buffer, which a Uint8Array cannot do" = 30
 "X's X prints under Debug as whatever its X says, because X's TypeScript is written by hand and its X entry does not say it declares X, so there is none to call" = 30
 "X is declared in another module, so this impl is written as module-level functions here rather than as methods on its class" = 22
 "X keeps its keys in order, and the port's keyed containers iterate in insertion order" = 22
@@ -127,7 +129,6 @@ total = 1556
 "X carries a pattern that has to be tested, and the port reads a X's payload once, into the binding, so what it tests is not tested" = 10
 "no declaration for type X" = 10
 "this closure owns X and is written as an X, which is not a bare callable" = 9
-"X grows or shrinks a byte buffer, which a Uint8Array cannot do" = 8
 "X has no declared type" = 8
 "X is declared with 1 type argument(s) but 2 written here" = 8
 "X is printed with X, and it prints as whatever its X says, because X's TypeScript is written by hand and its X entry does not say it declares X, so there is none to call" = 8
@@ -145,6 +146,7 @@ total = 1556
 "X is a receiver the engine does not model" = 5
 "X's X prints under Debug as whatever its X says, because X is not declared" = 5
 "this loop takes the sequence by value, and the runtime does not write it as an array" = 5
+"X and X are constrained to be the same type here and cannot be: the shapes differ" = 4
 "X builds whatever its target type names, and the engine could not name the type this one is collected into" = 4
 "X is printed with X, and it prints as whatever its X says, because X is a std type with no Debug rendering in the port" = 4
 "X's X prints under Debug as whatever its X says, because XIX has no Debug rendering in the port" = 4
@@ -173,6 +175,7 @@ total = 1556
 "X is printed with X, and the port's X has no alternate form, so it is printed the ordinary way" = 2
 "X is written without a type that reads itself out of the parsed value — a X is what writes one — so the parse stands alone and hands back a plain object" = 2
 "X on X is ambiguous between <&str as TryInto<MatchArgs>>::try_into and <T as TryInto<U>>::try_into" = 2
+"X on X, whose X the engine cannot read" = 2
 "X's X is encoded by calling X, and nothing in the port emits a class of that name, so reading one raises at run time" = 2
 "X's X prints under Debug as whatever its X says, because XEX has no Debug rendering in the port" = 2
 "X's message prints X with X, and it prints as whatever its X says, because X's TypeScript is written by hand and its X entry does not say it declares X, so there is none to call" = 2

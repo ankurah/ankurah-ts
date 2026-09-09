@@ -8,8 +8,10 @@ mod query;
 pub mod subst;
 mod unify;
 mod vars;
+#[cfg(test)]
+mod vars_tests;
 
 pub use def::{ArrayLen, IdSpaceExhausted, Prim, TraitRef, Ty, TypeId};
 pub use subst::bind_params;
 pub use unify::{unify, Mismatch};
-pub use vars::InferTable;
+pub use vars::{Contradiction, InferTable, VarKind};

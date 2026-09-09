@@ -79,7 +79,7 @@ export function normalize(bounds: KeyBounds): [CanonicalRange, number, Value[]] 
                   if (lowVal.equals(highVal) && lowIncl && highIncl) {
                     lowerTuple.push(lowVal.clone());
                     upperTuple.push(highVal.clone());
-                    eqPrefixLen = checkedAdd(eqPrefixLen, 1, 'i32');
+                    eqPrefixLen = checkedAdd(eqPrefixLen, 1, 'usize');
                     eqPrefixValues.push(lowVal.clone());
                     continue;
                   }

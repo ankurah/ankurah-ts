@@ -8,7 +8,7 @@
 
 use super::context::TypeContext;
 use crate::diag::Diag;
-use crate::ty::{Prim, Ty};
+use crate::ty::{Prim, Ty, VarKind};
 use super::expected;
 
 impl TypeContext<'_> {
@@ -109,22 +109,27 @@ impl TypeContext<'_> {
             syn::Lit::Byte(_) => Ty::Prim(Prim::U8),
             syn::Lit::Char(_) => Ty::Prim(Prim::Char),
             syn::Lit::Bool(_) => Ty::Prim(Prim::Bool),
-            // An unsuffixed literal is an inference variable with an INTEGRAL
-            // kind and the table has no kinds, so the width comes from the
-            // position and `i32`/`f64` stands where nothing wants one.
+            // An unsuffixed literal stands at every integer, or every float,
+            // until something says which: the position says it where the
+            // position has one, and otherwise the solver's own unknown does,
+            // defaulted to `i32` or `f64` only when the solve is over.
             syn::Lit::Int(int) => match Prim::from_rust_name(int.suffix()) {
                 Some(prim) => Ty::Prim(prim),
-                None => Ty::Prim(
-                    expected
-                        .and_then(expected::integer_width)
-                        .unwrap_or(Prim::I32),
-                ),
+                None => match expected.and_then(expected::integer_width) {
+                    Some(prim) => Ty::Prim(prim),
+                    None => self
+                        .literal_var(syn::spanned::Spanned::span(lit), VarKind::Integral)
+                        .unwrap_or(Ty::Prim(Prim::I32)),
+                },
             },
             syn::Lit::Float(float) => match Prim::from_rust_name(float.suffix()) {
                 Some(prim) => Ty::Prim(prim),
-                None => {
-                    Ty::Prim(expected.and_then(expected::float_width).unwrap_or(Prim::F64))
-                }
+                None => match expected.and_then(expected::float_width) {
+                    Some(prim) => Ty::Prim(prim),
+                    None => self
+                        .literal_var(syn::spanned::Spanned::span(lit), VarKind::Float)
+                        .unwrap_or(Ty::Prim(Prim::F64)),
+                },
             },
             other => {
                 return Err(self.refuse(

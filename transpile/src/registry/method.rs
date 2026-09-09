@@ -12,6 +12,10 @@
 
 /// The method a BOUND declares, as a candidate in its own right.
 pub(crate) mod declared;
+pub(crate) mod ranking;
+#[cfg(test)]
+mod ranking_tests;
+pub(crate) mod deref;
 pub(crate) mod signatures;
 
 pub use super::bounds::{Obligation, Undecided};
@@ -219,119 +223,6 @@ impl<'a> Probe<'a> {
         self
     }
 
-    // ── The deref chain ────────────────────────────────────────────────
-
-    /// One hop: `&T` to `T`, or through the `Deref` impl written for it.
-    pub fn deref_once(&self, ty: &Ty) -> Option<DerefStep> {
-        self.deref_once_reporting(ty, &mut Vec::new())
-    }
-
-    /// The same, collecting the bounds that stopped a conditional `Deref` from
-    /// being taken, so the caller can say why the type behind it was not
-    /// reached instead of silently stopping the chain.
-    fn deref_once_reporting(&self, ty: &Ty, undecided: &mut Vec<Obligation>) -> Option<DerefStep> {
-        if let Ty::Ref { inner, .. } = ty {
-            return Some(DerefStep {
-                from: ty.clone(),
-                to: (**inner).clone(),
-                kind: DerefKind::Builtin,
-                accessor: None,
-            });
-        }
-        let deref = self.reg.deref_trait()?;
-        for &id in self.reg.impls().of_trait(deref) {
-            let def = self.reg.impl_def(id);
-            let Some(mut subst) = def.match_self(ty) else {
-                continue;
-            };
-            self.infer_from_bounds(def, &mut subst);
-            // A conditional `impl<T: Bound> Deref for Wrapper<T>` does not
-            // dereference a `Wrapper<NoBound>`, and one whose bound nobody can
-            // decide does not dereference anything either: taking the step would
-            // be guessing at the type behind it.
-            match self.bounds_hold(&def.bounds, &subst) {
-                Some(deferred) if deferred.is_empty() => {}
-                Some(deferred) => {
-                    undecided.extend(deferred);
-                    continue;
-                }
-                None => continue,
-            }
-            let Some(target) = def.assoc_types.get("Target") else {
-                continue;
-            };
-            return Some(DerefStep {
-                from: ty.clone(),
-                to: self.normalize(&target.substitute(&subst)),
-                kind: DerefKind::Overloaded(id),
-                accessor: self.step_accessor(ty),
-            });
-        }
-        None
-    }
-
-    /// What has to be written to reach through one `Deref` step.
-    ///
-    /// That a type dereferences at all is a Rust fact and comes from the impl
-    /// table; how the hop is *written* is a fact about the port's runtime and
-    /// comes from `name_map::system_shapes`, keyed by the type's identity. An
-    /// `Arc` keeps its value in `.value`, a `Box` is its value, and a crate's own
-    /// `impl Deref` is a function the emitted class carries — Rust inserts that
-    /// call, and so must the TypeScript, or the field behind the wrapper is read
-    /// off the wrapper.
-    fn step_accessor(&self, ty: &Ty) -> Option<Accessor> {
-        let Some(id) = ty.id() else {
-            return Some(Accessor::Call("deref".to_string()));
-        };
-        if !self.reg.is_system(id) {
-            return Some(Accessor::Call("deref".to_string()));
-        }
-        match self.reg.shapes().accessor(id) {
-            Some(crate::name_map::system_shapes::Accessor::Field(name)) => {
-                Some(Accessor::Field(name.to_string()))
-            }
-            Some(crate::name_map::system_shapes::Accessor::Transparent) => None,
-            // A declared std type the port does not wrap — a lock, an iterator
-            // adaptor — dereferences without anything being written for it.
-            None => None,
-        }
-    }
-
-    /// Every receiver reachable from the written one, in the order Rust tries
-    /// them: itself, then each dereference, then the unsized form of the last.
-    pub fn deref_chain(&self, receiver: &Ty) -> Result<Vec<DerefStep>, MethodError> {
-        self.deref_chain_reporting(receiver, &mut Vec::new())
-    }
-
-    fn deref_chain_reporting(
-        &self,
-        receiver: &Ty,
-        undecided: &mut Vec<Obligation>,
-    ) -> Result<Vec<DerefStep>, MethodError> {
-        let mut steps: Vec<DerefStep> = Vec::new();
-        let mut current = receiver.clone();
-        while let Some(step) = self.deref_once_reporting(&current, undecided) {
-            if steps.len() >= MAX_DEREF_STEPS {
-                return Err(MethodError::DerefCycle {
-                    receiver: receiver.clone(),
-                });
-            }
-            current = step.to.clone();
-            steps.push(step);
-        }
-        // `[T; N]` becomes `[T]` at the end of the chain, which is the only
-        // unsizing a receiver in this corpus needs.
-        if let Ty::Array { elem, .. } = &current {
-            steps.push(DerefStep {
-                from: current.clone(),
-                to: Ty::Slice(elem.clone()),
-                kind: DerefKind::Unsize,
-                accessor: None,
-            });
-        }
-        Ok(steps)
-    }
-
     // ── Method resolution ──────────────────────────────────────────────
 
     /// Which function `receiver.name(..)` calls.
@@ -385,7 +276,13 @@ impl<'a> Probe<'a> {
         })
     }
 
-    /// The first step of the deref chain that answers to `name`.
+    /// The first step of the deref chain that answers to `name`, preferring a
+    /// candidate that applies outright.
+    ///
+    /// A candidate that applies only IF something nobody has decided holds
+    /// ranks below one that applies outright, at EVERY depth: `w.go()` on a
+    /// `Wrap<B>` reaches `Inner::go` through `Deref`, where the extension impl
+    /// written `impl<T: Red> Ext for Wrap<T>` wants a bound `B` does not meet.
     fn walk_chain(
         &self,
         candidates: &[Ty],
@@ -395,17 +292,19 @@ impl<'a> Probe<'a> {
         undecided: &[Obligation],
         in_scope_only: bool,
     ) -> Result<Option<MethodResolution>, MethodError> {
+        let mut deferred: Option<MethodResolution> = None;
         for (depth, candidate) in candidates.iter().enumerate() {
             for autoref in [AutoRef::None, AutoRef::Shared, AutoRef::Mut] {
                 let found = self.pick(candidate, autoref, name, explicit, in_scope_only)?;
                 let Some(pick) = found else { continue };
                 let ret = self.normalize(&pick.ret);
+                let outright = pick.obligations.is_empty();
                 let mut obligations = undecided.to_vec();
                 obligations.extend(pick.obligations);
                 let out_of_scope = (!self.trait_in_scope(&pick.callee))
                     .then(|| self.trait_of(&pick.callee))
                     .flatten();
-                return Ok(Some(MethodResolution {
+                let found = MethodResolution {
                     steps: steps[..depth].to_vec(),
                     autoref,
                     callee: pick.callee,
@@ -414,118 +313,14 @@ impl<'a> Probe<'a> {
                     adjusted: autoref.apply(candidate),
                     obligations,
                     out_of_scope,
-                }));
+                };
+                if outright {
+                    return Ok(Some(found));
+                }
+                deferred.get_or_insert(found);
             }
         }
-        Ok(None)
-    }
-
-    /// The one method that answers at this receiver and borrow, or nothing.
-    ///
-    /// Rust has two tiers, and so does this: the inherent methods of the type,
-    /// then every extension candidate — a trait impl written for a definite
-    /// type, an impl written for one of its own parameters, and the declaration
-    /// a `dyn Trait` or a bounded parameter dispatches through. Coherence means
-    /// one trait cannot have two impls for one type, so splitting the extension
-    /// tier further would only ever hide a clash between two *different* traits,
-    /// which is exactly the clash Rust reports. Two answers in a tier is an
-    /// ambiguity; there is no first-match tie-break.
-    fn pick(
-        &self,
-        candidate: &Ty,
-        autoref: AutoRef,
-        name: &str,
-        explicit: &[Ty],
-        in_scope_only: bool,
-    ) -> Result<Option<Pick>, MethodError> {
-        let adjusted = autoref.apply(candidate);
-
-        let inherent = self.impl_picks(candidate, &adjusted, name, true, explicit);
-        if let Some(pick) = self.exactly_one(candidate, inherent)? {
-            return Ok(Some(pick));
-        }
-
-        let mut extension = self.impl_picks(candidate, &adjusted, name, false, explicit);
-        // A `dyn Trait` receiver, and a generic parameter bounded by a trait,
-        // dispatch through the trait's own declaration. A written
-        // `impl Trait for dyn Trait` says the same thing more precisely, so
-        // where both are present the impl is the answer rather than a clash.
-        //
-        // Unless the impl only applies IF something nobody can decide holds.
-        // `impl<I: Iterator> IntoIterator for I` matches every receiver and
-        // leaves `I: Iterator` deferred; a caller that wrote
-        // `fn f<I: IntoIterator>(values: I)` has SAID that `I` implements the
-        // trait, and that is the more precise answer, not the blanket resting
-        // on a bound the engine cannot close. Written the other way,
-        // `values.into_iter()` resolved through the blanket and came out as
-        // `values.intoIter()` — a method nothing declares (G1).
-        for declared in self.declared_picks(candidate, &adjusted, name, explicit) {
-            let same_trait = |p: &Pick| {
-                p.callee
-                    .impl_id()
-                    .and_then(|id| self.reg.impl_def(id).trait_ref.as_ref().map(|t| t.id))
-                    == match &declared.callee {
-                        Callee::TraitObject(id, ..) => Some(id.clone()),
-                        _ => None,
-                    }
-            };
-            let settled = extension.iter().any(|p| same_trait(p) && p.obligations.is_empty());
-            if settled {
-                continue;
-            }
-            extension.retain(|p| !same_trait(p));
-            extension.push(declared);
-        }
-        self.exactly_one(candidate, self.nameable(extension, in_scope_only))
-    }
-
-    /// The extension candidates whose trait the calling module can name.
-    ///
-    /// Rust needs the trait in scope for the method to exist at all, and that
-    /// is a filter, not a tie-break: the std surface declares reflexive
-    /// blankets — `impl<T: ?Sized> BorrowMut<T> for T`, and the same for
-    /// `Borrow` and `AsRef` — which answer to `borrow_mut` on *every* receiver
-    /// at depth 0. Keeping them made `guard.borrow_mut()` on a
-    /// `RwLockReadGuard<RefCell<T>>` resolve to the blanket instead of
-    /// `RefCell::borrow_mut` one deref later, and the `.value` accessor the
-    /// guard needs was never written.
-    ///
-    /// The filter runs over the whole deref chain first. Only when nothing in
-    /// scope answers anywhere is the unfiltered list allowed to stand — a gap
-    /// in the `use` map must not silently delete the only method there is, and
-    /// `out_of_scope` on the resolution reports the survivor instead.
-    fn nameable(&self, picks: Vec<Pick>, in_scope_only: bool) -> Vec<Pick> {
-        let in_scope: Vec<Pick> = picks
-            .iter()
-            .filter(|p| self.trait_in_scope(&p.callee))
-            .cloned()
-            .collect();
-        if in_scope.is_empty() && !in_scope_only {
-            picks
-        } else {
-            in_scope
-        }
-    }
-
-    fn exactly_one(&self, candidate: &Ty, picks: Vec<Pick>) -> Result<Option<Pick>, MethodError> {
-        // One function reachable by two routes is one answer, not a clash. The
-        // same trait method arrives twice wherever a supertrait and a subtrait
-        // both offer it, and counting the copies reported `Iterator::find` as
-        // ambiguous with itself.
-        let mut picks = picks.into_iter().fold(Vec::new(), |mut kept: Vec<Pick>, pick| {
-            if !kept.iter().any(|p| p.callee == pick.callee) {
-                kept.push(pick);
-            }
-            kept
-        });
-        match picks.len() {
-            0 => Ok(None),
-            1 => Ok(Some(picks.remove(0))),
-            _ => Err(MethodError::Ambiguous {
-                at: candidate.clone(),
-                candidates: picks.into_iter().map(|p| p.callee).collect(),
-            }),
-        }
+        Ok(deferred)
     }
 
     /// The trait a callee came through, when it came through one.
@@ -673,6 +468,7 @@ impl<'a> Probe<'a> {
             self_kind: method.sig.self_kind,
             receiver: method.sig.receiver.as_ref().map(|r| r.substitute(&trait_subst)),
             type_params: method.sig.type_params.clone(),
+            is_async: method.sig.is_async,
             bounds: method
                 .sig
                 .bounds

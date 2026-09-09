@@ -87,6 +87,14 @@ pub trait Consumes {
     /// reported gap is supposed to make safe.
     fn refuses_call(&self, call: &syn::ExprMethodCall) -> bool;
 
+    /// Is this `.await` one the engine could not type, so that the value under
+    /// it is still the block's?
+    ///
+    /// Awaiting a future takes it by value; awaiting something the engine
+    /// cannot read as a future takes nothing, because there is no future there
+    /// to consume, and counting it as moved left the value released by nobody.
+    fn refuses_await(&self, await_expr: &syn::ExprAwait) -> bool;
+
     /// Whether a `match` hands its subject's payload to an arm. Rust moves the
     /// subject there, and the emitted `intoMatch` leaves it moved, so the block
     /// that declared it must not release it as well.

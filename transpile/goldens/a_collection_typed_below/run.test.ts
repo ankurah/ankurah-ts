@@ -1,9 +1,7 @@
 // Runs the emitted a_collection_typed_below against the real runtime.
 //
-// Against 6f40781's engine `entities` has no type at all: `Vec::new` does not
-// resolve, every use of the name is refused, and the emitted body releases
-// nothing it built. Here the element comes from the `push` below the `let`, so
-// the vector is released on both ways out.
+// A collection's element comes from the `push` BELOW its `let`, so the vector
+// is released on both ways out.
 
 import { afterAll, expect, test } from 'bun:test';
 import { expectNoOwnershipReports } from './leaks.ts';

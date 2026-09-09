@@ -50,7 +50,7 @@ pub const TEXT_ONLY: [(&str, &str); 4] = [
 /// README already doubts. None of them is a reason to relax the check.
 /// What each golden still fails to compile with, as one entry per error:
 /// `<file>:<code>`, sorted. Every entry is a decision somebody read.
-pub const TYPECHECK_DEBT: [(&str, &[&str], &str); 4] = [
+pub const TYPECHECK_DEBT: [(&str, &[&str], &str); 6] = [
     (
         "an_unknown_nothing_settles",
         &[
@@ -72,6 +72,24 @@ pub const TYPECHECK_DEBT: [(&str, &[&str], &str); 4] = [
          inside the function now goes through the run-time dispatcher and reaches every impl; \
          what is left is the signature, and what a bound with a blanket impl behind it should \
          emit as is open",
+    ),
+    (
+        "a_conditional_impl_loses",
+        &["a_conditional_impl_loses/input.ts:TS2344"],
+        "a trait impl written for SOME instantiations — `impl<T: Red> Ext for Wrap<T>` — is \
+         emitted by putting its bound on the CLASS, `class Wrap<T extends Red>`, so a `Wrap` \
+         of anything else does not typecheck even though Rust builds one. What the golden \
+         proves is the resolution: the conditional impl does not win over a method the deref \
+         chain reaches. How a conditional impl should be emitted is the open question",
+    ),
+    (
+        "a_bag_built_from_a_borrow",
+        &["a_bag_built_from_a_borrow/input.ts:TS18046"],
+        "the engine reads `T` off what `I: IntoIterator<Item = T>` projects through a \
+         `&Vec<Tag>`, which is `&Tag`, so the bag holds borrows and what is drained out \
+         of it releases nothing. TypeScript does not infer a type parameter from another \
+         parameter's constraint: `new<T, I extends Iterable<T>>` handed a `Tag[]` settles \
+         `I` and leaves `T` as `unknown`, the same open question the golden below records",
     ),
     (
         "an_item_projected_through_a_bound",

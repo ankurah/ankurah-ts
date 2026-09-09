@@ -387,9 +387,11 @@ fn zip_fill(written: &[Ty], expected: &[Ty]) -> Vec<Ty> {
 /// Broadcast<T>` — is a real type and stays. A parameter belonging to somebody
 /// else's signature that nothing bound — the `B` of `Iterator::map`, the `U` of
 /// `TryInto::try_into` — is a question, and answering with it would state as
-/// fact what nobody has decided.
+/// fact what nobody has decided. An inference variable is the same question in
+/// the solver's own terms: `Calculated::new` declares `F: Fn() -> T`, and
+/// taking `?0` for the closure's result answers the question with itself.
 pub fn is_settled(ty: &Ty, in_scope: &[String]) -> bool {
-    !has_infer(ty) && !holds_unbound(ty, in_scope)
+    !has_infer(ty) && !ty.mentions_any_var() && !holds_unbound(ty, in_scope)
 }
 
 fn holds_unbound(ty: &Ty, in_scope: &[String]) -> bool {

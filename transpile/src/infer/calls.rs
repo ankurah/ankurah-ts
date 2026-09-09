@@ -507,3 +507,17 @@ pub(crate) fn unparenthesise(expr: &syn::Expr) -> &syn::Expr {
         other => other,
     }
 }
+
+/// The closure an argument hands over, through the block that prepares its
+/// captures. `Calculated::new({ let base = base.read(); move || .. })` stands
+/// in a callable position exactly as a bare closure does.
+pub(crate) fn as_closure(expr: &syn::Expr) -> Option<&syn::ExprClosure> {
+    match unparenthesise(expr) {
+        syn::Expr::Closure(closure) => Some(closure),
+        syn::Expr::Block(block) => match block.block.stmts.last() {
+            Some(syn::Stmt::Expr(tail, None)) => as_closure(tail),
+            _ => None,
+        },
+        _ => None,
+    }
+}

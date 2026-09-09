@@ -25,7 +25,7 @@ export function shadowed(xs: Token[], replacement: Token[]): number {
       while (_at2 < _seq1.length) {
         const item = _seq1[_at2++];
         try {
-          total = checkedAdd(total, look(item), 'i32');
+          total = checkedAdd(total, look(item), 'u32');
         } finally {
           item.drop();
         }
@@ -56,7 +56,7 @@ export function twice(a: Token[], b: Token[]): number {
       while (_at2 < _seq1.length) {
         const rest = _seq1[_at2++];
         try {
-          total = checkedAdd(total, look(rest), 'i32');
+          total = checkedAdd(total, look(rest), 'u32');
         } finally {
           rest.drop();
         }
@@ -71,7 +71,7 @@ export function twice(a: Token[], b: Token[]): number {
       while (_at4 < _seq3.length) {
         const rest = _seq3[_at4++];
         try {
-          total = checkedAdd(total, look(rest), 'i32');
+          total = checkedAdd(total, look(rest), 'u32');
         } finally {
           rest.drop();
         }

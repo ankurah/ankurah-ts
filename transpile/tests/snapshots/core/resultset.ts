@@ -581,14 +581,16 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
               if (_v != null) {
                 const keySpec = _v;
                 try {
-                  guard.value.order[i].sortKey = ResultSetWrite.computeSortKey(guard.value.order[i].entity, keySpec);
+                  const _a0 = ResultSetWrite.computeSortKey(guard.value.order[i].entity, keySpec);
+                  dropOwned(guard.value.order[i].sortKey);
+                  guard.value.order[i].sortKey = _a0;
                 } finally {
                   keySpec.drop();
                 }
               }
             }
             guard.value.order[i].dirty = false;
-            i = checkedAdd(i, 1, 'i32');
+            i = checkedAdd(i, 1, 'usize');
           } else {
             const removedEntry = guard.value.order.splice(i, 1)[0];
             try {
@@ -600,7 +602,7 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
             }
           }
         } else {
-          i = checkedAdd(i, 1, 'i32');
+          i = checkedAdd(i, 1, 'usize');
         }
       }
       guard.value.index.clear();

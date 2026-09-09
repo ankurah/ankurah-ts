@@ -1,8 +1,8 @@
 // Runs the emitted a_constructor_typed_by_its_closure against the runtime.
 //
-// Against 6f40781's engine `counted` has no type — `Calculated::new` does not
-// resolve, because the path is written without its argument — so `counted.get()`
-// is dispatched by name and nothing releases the value the constructor built.
+// A constructor written without its type argument takes one from the closure
+// handed to it, so `counted.get()` resolves and what the constructor built is
+// released.
 
 import { afterAll, expect, test } from 'bun:test';
 import { expectNoOwnershipReports } from './leaks.ts';

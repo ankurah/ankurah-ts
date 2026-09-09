@@ -43,10 +43,10 @@ export function readBorrowing(tokens: Token[], want: Token): number {
   try {
     let hits = 0;
     if ((iterFind([...tokens], p, 'borrow') != null)) {
-      hits = checkedAdd(hits, 1, 'i32');
+      hits = checkedAdd(hits, 1, 'usize');
     }
     if ((iterFind([...tokens], p, 'borrow') != null)) {
-      hits = checkedAdd(hits, 1, 'i32');
+      hits = checkedAdd(hits, 1, 'usize');
     }
     _moved0 = true;
     p.drop();

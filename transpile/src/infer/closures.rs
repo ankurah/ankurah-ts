@@ -134,7 +134,7 @@ impl TypeContext<'_> {
             // off the bound would answer the question with the question.
             syn::ReturnType::Default => shape
                 .as_ref()
-                .map(|s| s.output.clone())
+                .map(|s| self.solved(&s.output))
                 .filter(|ty| *ty != Ty::Unit && expected::is_settled(ty, &self.params))
                 .or_else(|| self.closure_body_type(closure, &bindings)),
         };

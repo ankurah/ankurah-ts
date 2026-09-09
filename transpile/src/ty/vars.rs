@@ -5,10 +5,59 @@
 //! collected over the whole body are unified against each other through the
 //! table, and what stays unbound at the end is reported rather than guessed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::def::{InferId, TraitRef, Ty};
 use super::unify::{unify_with, Mismatch, Unknowns};
+
+/// What a variable is allowed to stand for.
+///
+/// An unsuffixed literal is Rust's `{integer}` or `{float}`: an unknown that
+/// only an integer, or only a float, may bind, and that takes `i32` or `f64`
+/// once the solve is over and nothing stronger has bound it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VarKind {
+    Integral,
+    Float,
+}
+
+impl VarKind {
+    /// May a variable of this kind stand for that type?
+    pub fn admits(self, ty: &Ty) -> bool {
+        match (self, ty) {
+            (VarKind::Integral, Ty::Prim(prim)) => prim.is_integer(),
+            (VarKind::Float, Ty::Prim(prim)) => matches!(prim, super::def::Prim::F32 | super::def::Prim::F64),
+            _ => false,
+        }
+    }
+
+    /// What a literal of this kind is where nothing said otherwise, which is
+    /// Rust's own fallback.
+    pub fn fallback(self) -> Ty {
+        match self {
+            VarKind::Integral => Ty::Prim(super::def::Prim::I32),
+            VarKind::Float => Ty::Prim(super::def::Prim::F64),
+        }
+    }
+}
+
+/// A constraint the solver could not meet, held until the solve is over.
+///
+/// For: the walk that collects constraints is quiet, so a message filed while
+/// it runs is thrown away with the rest of its diagnostics. A contradiction is
+/// a fact about the table rather than a message, so the table keeps it and the
+/// site that asked re-files it once the solve is done.
+#[derive(Clone, Debug)]
+pub struct Contradiction {
+    pub span: proc_macro2::Span,
+    pub want: Ty,
+    pub found: Ty,
+    pub mismatch: Mismatch,
+    /// The type the constraint was read THROUGH. A method's parameter is the
+    /// receiver's own type argument substituted in, so `xs.push("x")` on a
+    /// `Vec<?0>` disagrees about `?0` even though neither side still names it.
+    pub through: Option<Ty>,
+}
 
 /// Every inference variable of one body, and what each stands for.
 ///
@@ -32,6 +81,19 @@ pub struct InferTable {
     /// where it was left off. Rust prefers what the body says to what the
     /// declaration defaults to, so these are unified LAST.
     defaults: Vec<(InferId, Ty, proc_macro2::Span)>,
+    /// Variables a constraint with no solution touched. What such a variable
+    /// stands for is a type the engine cannot defend, so it answers as an
+    /// unknown and the binding that happened to come first stops answering.
+    poisoned: HashSet<InferId>,
+    /// Constraints with no solution, in the order they were met.
+    contradictions: Vec<Contradiction>,
+    /// What each restricted variable may stand for. Only an unsuffixed literal
+    /// mints one, and only it is ever defaulted.
+    kinds: HashMap<InferId, VarKind>,
+    /// The restricted variables the fallback decided, rather than the body. A
+    /// width the engine fell back to is not a fact about the program, so a
+    /// constraint it fails is the engine's own guess and says nothing.
+    defaulted: HashSet<InferId>,
 }
 
 impl InferTable {
@@ -88,15 +150,86 @@ impl InferTable {
         self.bound.len()
     }
 
-    /// How many variables stand for something. A solve round that leaves this
-    /// unchanged has reached its fixed point.
+    /// How many variables the solve has decided — bound, or poisoned and so
+    /// decided to be undecidable. A round that leaves this unchanged has
+    /// reached its fixed point, which is why poison counts: it only ever grows.
     pub fn bound_count(&self) -> usize {
-        self.bound.iter().filter(|b| b.is_some()).count()
+        (0..self.bound.len())
+            .filter(|i| self.bound[*i].is_some() || self.poisoned.contains(&InferId(*i as u32)))
+            .count()
     }
 
-    /// What this variable stands for, one step, without following further.
+    /// What this variable stands for, one step, without following further. A
+    /// poisoned variable stands for nothing: the constraint that touched it had
+    /// no solution, and the type it held before is not an answer.
     pub fn binding(&self, var: InferId) -> Option<&Ty> {
+        if self.poisoned.contains(&var) {
+            return None;
+        }
         self.bound.get(var.0 as usize).and_then(|b| b.as_ref())
+    }
+
+    /// Mark every variable this type mentions as standing for nothing — the
+    /// ones written in it, and the ones still left in what it resolves to,
+    /// which is where a variable bound to a shape holding another one hides.
+    pub fn poison(&mut self, ty: &Ty) {
+        let mut found = Vec::new();
+        collect_vars(ty, &mut found);
+        collect_vars(&self.resolve(ty), &mut found);
+        self.poisoned.extend(found);
+    }
+
+    /// Does this type stand on a width the fallback chose rather than the body?
+    pub fn mentions_defaulted(&self, ty: &Ty) -> bool {
+        let mut found = Vec::new();
+        collect_vars(ty, &mut found);
+        found.iter().any(|id| self.defaulted.contains(id))
+    }
+
+    /// The variable standing at one site, restricted to what a kind admits.
+    pub fn kinded_at_site(
+        &mut self,
+        line: usize,
+        col: usize,
+        index: usize,
+        kind: VarKind,
+    ) -> InferId {
+        let id = self.at_site(line, col, index);
+        self.kinds.entry(id).or_insert(kind);
+        id
+    }
+
+    /// The variable standing at one site, if anything has minted one.
+    pub fn site(&self, line: usize, col: usize, index: usize) -> Option<InferId> {
+        self.sites.get(&(line, col, index)).copied()
+    }
+
+    /// Bind every restricted variable nothing else bound to what its kind falls
+    /// back to. Rust defaults `{integer}` to `i32` and `{float}` to `f64` once
+    /// its own inference is over, and this is that step and the only default.
+    pub fn settle_kinds(&mut self) {
+        let open: Vec<(InferId, VarKind)> = self
+            .kinds
+            .iter()
+            .filter(|(id, _)| self.binding(**id).is_none() && !self.poisoned.contains(id))
+            .map(|(id, kind)| (*id, *kind))
+            .collect();
+        for (id, kind) in open {
+            if self.assign(id, &kind.fallback()).is_ok() {
+                self.defaulted.insert(id);
+            }
+        }
+    }
+
+    /// Keep a constraint that had no solution, to be re-checked and reported
+    /// once the solve is done.
+    pub fn record_contradiction(&mut self, found: Contradiction) {
+        self.contradictions.push(found);
+    }
+
+    /// Take the constraints that had no solution, leaving none behind.
+    pub fn take_contradictions(&mut self) -> Vec<Contradiction> {
+        std::mem::take(&mut self.contradictions)
     }
 
     /// The type with every bound variable replaced by what it stands for, all
@@ -205,11 +338,37 @@ impl Unknowns for BodyVars<'_> {
 
 impl InferTable {
     fn assign(&mut self, var: InferId, ty: &Ty) -> Result<(), Mismatch> {
+        // A poisoned variable meets anything and holds nothing: one constraint
+        // with no solution is the report, and every constraint after it would
+        // say the same failure again in another position.
+        if self.poisoned.contains(&var) {
+            return Ok(());
+        }
+        // Through the table: `a = b` then `b = Vec<a>` mentions `a` only once
+        // `b` is followed, and binding it would make `resolve` recurse forever.
+        let ty = &self.resolve(ty);
         if ty.mentions_var(var) {
             return Err(Mismatch::VarOccurs {
                 var,
                 ty: ty.clone(),
             });
+        }
+        // A restricted variable stands only for what its kind admits, and a
+        // variable it meets takes the same restriction: `let mut n = 0; n =
+        // xs.len()` is a `usize`, and `n = ()` has no solution.
+        if let Some(kind) = self.kinds.get(&var).copied() {
+            match ty {
+                Ty::Var(other) => {
+                    self.kinds.entry(*other).or_insert(kind);
+                }
+                _ if !kind.admits(ty) => {
+                    return Err(Mismatch::Shape {
+                        pattern: Ty::Var(var),
+                        concrete: ty.clone(),
+                    })
+                }
+                _ => {}
+            }
         }
         self.bound[var.0 as usize] = Some(ty.clone());
         self.journal.push(var);
@@ -217,177 +376,29 @@ impl InferTable {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ty::{Prim, TypeId};
-
-    fn named(id: u32, args: Vec<Ty>) -> Ty {
-        Ty::Named {
-            id: TypeId(id),
-            args,
+/// Every inference variable written anywhere inside a type.
+fn collect_vars(ty: &Ty, into: &mut Vec<InferId>) {
+    match ty {
+        Ty::Var(id) => into.push(*id),
+        Ty::Named { args, .. } | Ty::Tuple(args) => {
+            args.iter().for_each(|a| collect_vars(a, into))
         }
-    }
-
-    #[test]
-    fn a_variable_binds_to_whatever_it_is_unified_with() {
-        let mut table = InferTable::new();
-        let v = Ty::Var(table.fresh());
-        assert_eq!(table.unify(&v, &Ty::Prim(Prim::U32)), Ok(()));
-        assert_eq!(table.resolve(&v), Ty::Prim(Prim::U32));
-    }
-
-    #[test]
-    fn a_variable_binds_from_either_side() {
-        let mut table = InferTable::new();
-        let v = Ty::Var(table.fresh());
-        assert_eq!(table.unify(&Ty::Str, &v), Ok(()));
-        assert_eq!(table.resolve(&v), Ty::Str);
-    }
-
-    #[test]
-    fn a_variable_inside_a_type_is_bound_by_the_position_it_stands_at() {
-        // `Vec<?0>` against `Vec<u8>` is what a later `push` gives an empty
-        // collection.
-        let mut table = InferTable::new();
-        let v = Ty::Var(table.fresh());
-        let pending = named(1, vec![v.clone()]);
-        let known = named(1, vec![Ty::Prim(Prim::U8)]);
-        assert_eq!(table.unify(&pending, &known), Ok(()));
-        assert_eq!(table.resolve(&pending), known);
-    }
-
-    #[test]
-    fn a_bound_and_a_type_that_meets_it_are_neither_equal_nor_a_mismatch() {
-        // `Arc<dyn Trait>` accepts an `Arc<Concrete>` by coercion, so the walk
-        // stops at the bound rather than refusing; what the bound projects is
-        // constrained where the argument is read.
-        let mut table = InferTable::new();
-        let v = Ty::Var(table.fresh());
-        let bound = Ty::Dyn {
-            traits: vec![crate::ty::TraitRef {
-                id: TypeId(9),
-                args: Vec::new(),
-                bindings: Vec::new(),
-            }],
-        };
-        assert_eq!(table.unify(&named(1, vec![bound]), &named(1, vec![Ty::Str])), Ok(()));
-        assert_eq!(table.resolve(&v), v, "nothing was bound by a coercion");
-    }
-
-    #[test]
-    fn a_binding_made_once_decides_every_later_comparison() {
-        let mut table = InferTable::new();
-        let v = Ty::Var(table.fresh());
-        assert_eq!(table.unify(&v, &Ty::Str), Ok(()));
-        assert_eq!(table.unify(&v, &Ty::Str), Ok(()));
-        assert!(matches!(
-            table.unify(&v, &Ty::Prim(Prim::U8)),
-            Err(Mismatch::Shape { .. })
-        ));
-        assert_eq!(table.resolve(&v), Ty::Str, "the first answer stands");
-    }
-
-    #[test]
-    fn two_variables_unified_together_stand_for_one_type() {
-        let mut table = InferTable::new();
-        let a = Ty::Var(table.fresh());
-        let b = Ty::Var(table.fresh());
-        assert_eq!(table.unify(&a, &b), Ok(()));
-        assert_eq!(table.unify(&b, &Ty::Prim(Prim::I64)), Ok(()));
-        assert_eq!(table.resolve(&a), Ty::Prim(Prim::I64));
-    }
-
-    #[test]
-    fn a_constraint_with_no_solution_binds_nothing() {
-        // The first position fits and the second does not; leaving the first
-        // behind would answer half a constraint that has no answer.
-        let mut table = InferTable::new();
-        let a = Ty::Var(table.fresh());
-        let err = table.unify(
-            &Ty::Tuple(vec![a.clone(), Ty::Str]),
-            &Ty::Tuple(vec![Ty::Str, Ty::Unit]),
-        );
-        assert!(err.is_err(), "the second position cannot be met");
-        assert_eq!(table.bound_count(), 0);
-    }
-
-    #[test]
-    fn one_site_asked_twice_answers_with_the_same_unknown() {
-        let mut table = InferTable::new();
-        assert_eq!(table.at_site(4, 9, 0), table.at_site(4, 9, 0));
-        assert_ne!(table.at_site(4, 9, 0), table.at_site(4, 9, 1));
-        assert_ne!(table.at_site(4, 9, 0), table.at_site(5, 9, 0));
-    }
-
-    #[test]
-    fn a_variable_unified_with_itself_binds_nothing() {
-        let mut table = InferTable::new();
-        let v = Ty::Var(table.fresh());
-        assert_eq!(table.unify(&v, &v), Ok(()));
-        assert_eq!(table.bound_count(), 0);
-    }
-
-    #[test]
-    fn a_variable_may_not_contain_itself() {
-        let mut table = InferTable::new();
-        let v = Ty::Var(table.fresh());
-        let recursive = named(1, vec![v.clone()]);
-        assert!(matches!(
-            table.unify(&v, &recursive),
-            Err(Mismatch::VarOccurs { .. })
-        ));
-    }
-
-    #[test]
-    fn a_chain_of_variables_resolves_all_the_way_down() {
-        let mut table = InferTable::new();
-        let a = Ty::Var(table.fresh());
-        let b = Ty::Var(table.fresh());
-        let c = Ty::Var(table.fresh());
-        assert_eq!(table.unify(&a, &b), Ok(()));
-        assert_eq!(table.unify(&b, &c), Ok(()));
-        assert_eq!(table.unify(&c, &named(7, vec![Ty::Str])), Ok(()));
-        assert_eq!(table.resolve(&a), named(7, vec![Ty::Str]));
-    }
-
-    #[test]
-    fn what_nothing_bound_is_reported_rather_than_filled_in() {
-        let mut table = InferTable::new();
-        let a = Ty::Var(table.fresh());
-        let b = Ty::Var(table.fresh());
-        let pair = Ty::Tuple(vec![a.clone(), b.clone(), a.clone()]);
-        assert_eq!(table.unify(&a, &Ty::Str), Ok(()));
-        assert!(table.resolve(&pair).mentions_any_var(), "one position is still open");
-        assert_eq!(
-            table.resolve(&pair),
-            Ty::Tuple(vec![Ty::Str, b, Ty::Str]),
-            "the solved positions still answer"
-        );
-    }
-
-    #[test]
-    fn a_written_underscore_is_not_a_variable() {
-        // `_` is the source's hole; nothing here fills it, and treating it as a
-        // variable would make the solver answer a question the source asked of
-        // rustc.
-        let mut table = InferTable::new();
-        assert!(matches!(
-            table.unify(&Ty::Infer, &Ty::Str),
-            Err(Mismatch::Shape { .. })
-        ));
-    }
-
-    #[test]
-    fn a_shape_that_cannot_be_reconciled_is_refused_rather_than_chosen() {
-        let mut table = InferTable::new();
-        let v = Ty::Var(table.fresh());
-        assert_eq!(table.unify(&named(1, vec![v]), &named(1, vec![Ty::Str])), Ok(()));
-        let err = table.unify(&named(1, vec![Ty::Var(InferId(0))]), &named(1, vec![Ty::Unit]));
-        assert!(
-            matches!(err, Err(Mismatch::Shape { .. })),
-            "neither side wins: {:?}",
-            err
-        );
+        Ty::Ref { inner, .. } | Ty::Slice(inner) | Ty::Array { elem: inner, .. } => {
+            collect_vars(inner, into)
+        }
+        Ty::Dyn { traits } | Ty::ImplTrait { bounds: traits } => {
+            for trait_ in traits {
+                trait_.args.iter().for_each(|a| collect_vars(a, into));
+                trait_.bindings.iter().for_each(|(_, t)| collect_vars(t, into));
+            }
+        }
+        Ty::Assoc { base, trait_, .. } => {
+            collect_vars(base, into);
+            if let Some(trait_) = trait_ {
+                trait_.args.iter().for_each(|a| collect_vars(a, into));
+                trait_.bindings.iter().for_each(|(_, t)| collect_vars(t, into));
+            }
+        }
+        Ty::Param(_) | Ty::Prim(_) | Ty::Str | Ty::Unit | Ty::Never | Ty::Infer => {}
     }
 }

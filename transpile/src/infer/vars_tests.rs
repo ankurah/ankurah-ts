@@ -77,9 +77,11 @@ fn a_borrow_the_engine_reads_the_value_through_is_not_a_disagreement() {
 }
 
 #[test]
-fn the_walk_that_writes_a_body_says_so_without_binding() {
-    // A binding made while the body is written reaches the statements below it
-    // and not the ones above, which is one local with two answers.
+fn the_walk_that_writes_a_body_binds_nothing_and_says_nothing() {
+    // A binding made while the body is written would reach the statements
+    // below it and not the ones above, which is one local with two answers;
+    // and a disagreement found there is between types the solve never saw, so
+    // the solve is the only walk that reports one.
     let c = Fixture::build(&[("lib.rs", "pub struct Thing;")]);
     let cx = c.context("lib.rs", None);
     let thing = c.named("lib.rs", "Thing", vec![]);
@@ -89,10 +91,5 @@ fn the_walk_that_writes_a_body_says_so_without_binding() {
     assert_eq!(cx.solved(&unknown), unknown, "the writing walk bound an unknown");
 
     cx.constrain_here(at(), &Ty::Str, &c.system("std::vec::Vec", vec![unknown]));
-    assert_eq!(
-        c.messages().len(),
-        1,
-        "two types that cannot meet are still said: {:?}",
-        c.messages()
-    );
+    assert!(c.messages().is_empty(), "{:?}", c.messages());
 }

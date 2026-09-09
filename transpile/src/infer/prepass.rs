@@ -28,9 +28,19 @@ impl TypeContext<'_> {
         self.settle_defaults();
         let after = self.to_a_fixed_point(block, returns);
         self.settle_defaults();
+        // Rust's own last step: an unsuffixed literal nothing else decided
+        // takes `i32` or `f64`, and it is the only type this engine defaults.
+        // One more round follows, because a receiver that was an open literal
+        // is a receiver whose methods only now resolve.
+        self.vars.borrow_mut().settle_kinds();
+        let settled = self.to_a_fixed_point(block, returns);
         self.vars.borrow_mut().set_solving(false);
-        let limit = limit.or(after);
+        let limit = limit.or(after).or(settled);
         self.sink.rewind(mark);
+        // A constraint with no solution is what this walk KNOWS rather than
+        // what it could not do, so it outlives the rewind: re-checked against
+        // the table the solve left, and said once at the site that asked.
+        self.settle_contradictions();
         // Past one round per variable the table has stopped being monotone,
         // which is a defect in the solver rather than a gap in the body.
         if let Some(rounds) = limit {
@@ -245,7 +255,13 @@ impl<'ast> Visit<'ast> for Prepass<'_, '_> {
         }
     }
 
-    /// An item inside a body declares its own names in its own body, and none
-    /// of it is this function's.
-    fn visit_item(&mut self, _item: &'ast syn::Item) {}
+    /// A `const` written inside a body binds a name the statements below it
+    /// read, and its annotation is what types that name. A nested `fn` or
+    /// `impl` declares its own names in its own body, and none of it is this
+    /// function's.
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        let syn::Item::Const(c) = item else { return };
+        let Ok(ty) = self.tc.resolve_written_type(&c.ty) else { return };
+        self.tc.bind(&c.ident.to_string(), ty);
+    }
 }

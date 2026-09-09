@@ -233,3 +233,28 @@ fn a_value_that_is_not_a_closure_gets_no_callable_expectation() {
     let ts = fixture.emitted("lib.rs");
     assert!(ts.contains("apply(f)"), "handed on as it stands:\n{}", ts);
 }
+
+#[test]
+fn a_constructor_takes_its_type_argument_from_the_closure_handed_to_it() {
+    // `Calculated::new` declares `F: Fn() -> T` and leaves `T` to whatever the
+    // closure answers with. Taking the bound's own unknown for it answers the
+    // question with the question.
+    let c = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Calculated<T> {\n    pub value: T,\n}\n\
+         impl<T> Calculated<T> {\n    \
+             pub fn new<F: Fn() -> T>(compute: F) -> Calculated<T> {\n        \
+                 Calculated { value: compute() }\n    }\n}",
+    )]);
+    let mut cx = c.context("lib.rs", None);
+    cx.push_fn(vec![]);
+    let block: syn::Block =
+        syn::parse_str("{ let counted = Calculated::new(|| 7usize); counted }").unwrap();
+    cx.collect_constraints(&block, None);
+    let syn::Stmt::Local(local) = &block.stmts[0] else { panic!("not a let") };
+    let built = cx.resolve_expr(&local.init.as_ref().unwrap().expr).unwrap();
+    assert_eq!(
+        cx.solved(&built),
+        c.named("lib.rs", "Calculated", vec![Ty::Prim(Prim::Usize)])
+    );
+}

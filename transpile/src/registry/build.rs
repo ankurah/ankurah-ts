@@ -16,7 +16,7 @@ use super::{
 };
 use crate::diag::DiagSink;
 use crate::ty::{Ty, TypeId};
-use crate::types::{FieldInfo, FnInfo, ImplInfo, RustFile, TraitInfo, VisInfo};
+use crate::types::{FieldInfo, ImplInfo, RustFile, TraitInfo, VisInfo};
 
 /// A parsed file, the path it came from, and whether anything is emitted for it.
 #[derive(Debug)]
@@ -511,7 +511,7 @@ pub(super) fn resolve_file(
         let Some(id) = reg.module_value(module, &f.name) else {
             continue;
         };
-        if let Some(sig) = method_sig(reg, module, &f.type_params, None, f, &quiet) {
+        if let Some(sig) = super::sig::method_sig(reg, module, &f.type_params, None, f, &quiet) {
             updates.push(Update::ValueSig { id, sig });
         }
         let Some(rust_ty) = &f.rust_return else {
@@ -837,7 +837,7 @@ fn resolve_trait(
     for method in &t.methods {
         let mut params = t.type_params.clone();
         params.extend(method.type_params.iter().cloned());
-        if let Some(sig) = method_sig(reg, module, &params, Some(&self_ty), method, sink) {
+        if let Some(sig) = super::sig::method_sig(reg, module, &params, Some(&self_ty), method, sink) {
             methods.insert(
                 method.name.clone(),
                 TraitMethod {
@@ -905,7 +905,7 @@ fn resolve_impl(
     for method in &imp.methods {
         let mut params = imp.type_params.clone();
         params.extend(method.type_params.iter().cloned());
-        if let Some(sig) = method_sig(reg, module, &params, Some(&self_ty), method, sink) {
+        if let Some(sig) = super::sig::method_sig(reg, module, &params, Some(&self_ty), method, sink) {
             methods.insert(method.name.clone(), sig);
         }
     }
@@ -924,87 +924,6 @@ fn resolve_impl(
     })
 }
 
-
-/// A method's signature, or nothing when the engine could not name a type in
-/// it. A method whose return type the engine cannot read stays out of the
-/// table: "no answer" is the truth, and calling it `()` would not be.
-fn method_sig(
-    reg: &TypeRegistry,
-    module: ModuleId,
-    params: &[String],
-    self_ty: Option<&Ty>,
-    method: &FnInfo,
-    sink: &DiagSink,
-) -> Option<MethodSig> {
-    let env = TypeEnv::new(reg, module, sink)
-        .with_params(params)
-        .with_self(self_ty);
-
-    // `self: Arc<Self>` and the other written receivers put the method on a
-    // type the engine does not yet walk to. Reading one as by-value would say it
-    // sits on `Self`; leaving it out says the truth, and the written type is
-    // kept on the extracted function for the step that supports it.
-    if method.self_kind == Some(crate::types::SelfKind::Arbitrary) {
-        if let Some(written) = &method.self_receiver {
-            sink.push(crate::diag::Diag::at(
-                &sink.file(),
-                syn::spanned::Spanned::span(written),
-                format!(
-                    "`self: {}` is a receiver the engine does not model; `{}` is left out of the method table",
-                    quote::ToTokens::to_token_stream(written),
-                    method.name
-                ),
-            ));
-        }
-        return None;
-    }
-
-    let receiver = self_ty.map(|ty| match method.self_kind {
-        Some(crate::types::SelfKind::Ref) => Ty::Ref {
-            mutable: false,
-            inner: Box::new(ty.clone()),
-        },
-        Some(crate::types::SelfKind::RefMut) => Ty::Ref {
-            mutable: true,
-            inner: Box::new(ty.clone()),
-        },
-        _ => ty.clone(),
-    });
-    let receiver = method.self_kind.and(receiver);
-
-    let mut resolved_params = Vec::new();
-    for param in &method.params {
-        let Some(rust_ty) = &param.rust_ty else {
-            continue;
-        };
-        match resolve_type(rust_ty, &env) {
-            Ok(ty) => resolved_params.push((param.name.clone(), ty)),
-            Err(diag) => {
-                sink.push(diag);
-                return None;
-            }
-        }
-    }
-    // A function with no written return type returns the unit type.
-    let ret = match &method.rust_return {
-        None => Ty::Unit,
-        Some(rust_ty) => match resolve_type(rust_ty, &env) {
-            Ok(ty) => ty,
-            Err(diag) => {
-                sink.push(diag);
-                return None;
-            }
-        },
-    };
-    Some(MethodSig {
-        params: resolved_params,
-        ret,
-        self_kind: method.self_kind,
-        receiver,
-        type_params: method.type_params.clone(),
-        bounds: resolve_bounds(&method.syn_generics, &env, sink),
-    })
-}
 
 impl TypeRegistry {
     /// A type declared directly in this module, ignoring imports and the prelude.

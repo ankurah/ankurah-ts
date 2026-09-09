@@ -1,8 +1,8 @@
 // Runs the emitted a_closure_body_typed_by_its_position against the runtime.
 //
-// Against 9099480's engine the closure's parameter is typed by nothing while
-// the body's constraints are collected, so `tags` holds an element the engine
-// never named and the tags it built are never released.
+// The closure's parameter comes from the position it stands in, so the
+// collection its body fills holds an element the engine can name and the tags
+// it built are released.
 
 import { afterAll, expect, test } from 'bun:test';
 import { expectNoOwnershipReports } from './leaks.ts';

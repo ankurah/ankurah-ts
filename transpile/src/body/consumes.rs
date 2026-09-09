@@ -60,6 +60,18 @@ impl ownership::moves::Consumes for BodyTranslator<'_> {
         answer == crate::body::places::EntryFinish::Hole || self.refuses_named_iterator_terminal(call)
     }
 
+    /// A refused `await` is one whose whole expression the engine cannot type.
+    /// Asked of the same resolver the emitter asks, so the scan and the
+    /// emitter cannot disagree about who releases the operand.
+    fn refuses_await(&self, await_expr: &syn::ExprAwait) -> bool {
+        let Some(tc) = &self.types else { return false };
+        let tc = tc.borrow();
+        let mark = tc.sink.mark();
+        let answer = tc.resolve_expr(&syn::Expr::Await(await_expr.clone())).is_err();
+        tc.sink.rewind(mark);
+        answer
+    }
+
     fn consumes_receiver(&self, call: &syn::ExprMethodCall) -> bool {
         // F1: a consuming iterator terminal takes the sequence's ELEMENTS, and
         // the block that produced them owes them nothing afterwards. Rust's own
