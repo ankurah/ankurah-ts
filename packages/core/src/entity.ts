@@ -110,35 +110,27 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
   static fromState(id: EntityId, collection: CollectionId, state: State): Result<Entity, RetrievalError> {
     let _moved0 = false;
     try {
+      let _moved1 = false;
       let backends = new HashMap();
-      for (const [name, stateBuffer] of [...state.stateBuffers.deref()]) {
-        const _r1 = backendFromString(name, stateBuffer);
-        if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-        let _moved2 = false;
-        const backend = _r1.unwrap();
-        try {
-          _moved2 = true;
-          backends.set(name, backend);
-        } finally {
-          if (!_moved2) backend.drop();
-        }
-      }
-      let _moved4 = false;
-      const _b3 = new RwLock(new EntityInnerState(state.head.clone(), backends));
       try {
-        let _moved6 = false;
-        const _b5 = new EntityKind('Primary', {});
-        try {
-          const _b7 = Broadcast.new();
-          _moved4 = true;
-          _moved6 = true;
-          _moved0 = true;
-          return Result.Ok(new Entity(Arc.new(new EntityInner(id, collection, _b3, _b5, _b7))));
-        } finally {
-          if (!_moved6) dropOwned(_b5);
+        for (const [name, stateBuffer] of [...state.stateBuffers.deref()]) {
+          const _r2 = backendFromString(name, stateBuffer);
+          if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+          let _moved3 = false;
+          const backend = _r2.unwrap();
+          try {
+            _moved3 = true;
+            backends.set(name, backend);
+          } finally {
+            if (!_moved3) backend.drop();
+          }
         }
+        const _b4 = state.head.clone();
+        _moved0 = true;
+        _moved1 = true;
+        return Result.Ok(new Entity(Arc.new(new EntityInner(id, collection, new RwLock(new EntityInnerState(_b4, backends)), new EntityKind('Primary', {}), Broadcast.new()))));
       } finally {
-        if (!_moved4) dropOwned(_b3);
+        if (!_moved1) dropOwned(backends);
       }
     } finally {
       if (!_moved0) collection.drop();
@@ -439,12 +431,19 @@ export class Entity extends Struct implements AbstractEntity, Filterable {
     try {
       const state = this.deref().state.read();
       try {
+        let _moved1 = false;
         let forked = new HashMap();
-        for (const [name, backend] of state.value.backends) {
-          forked.set(name, backend.value.fork());
+        try {
+          for (const [name, backend] of state.value.backends) {
+            forked.set(name, backend.value.fork());
+          }
+          const _b2 = state.value.head.clone();
+          _moved0 = true;
+          _moved1 = true;
+          return new Entity(Arc.new(new EntityInner(this.deref().id, this.deref().collection.clone(), new RwLock(new EntityInnerState(_b2, forked)), new EntityKind('Transacted', { trxAlive: trxAlive, upstream: this.clone() }), Broadcast.new())));
+        } finally {
+          if (!_moved1) dropOwned(forked);
         }
-        _moved0 = true;
-        return new Entity(Arc.new(new EntityInner(this.deref().id, this.deref().collection.clone(), new RwLock(new EntityInnerState(state.value.head.clone(), forked)), new EntityKind('Transacted', { trxAlive: trxAlive, upstream: this.clone() }), Broadcast.new())));
       } finally {
         state.drop();
       }
@@ -559,35 +558,27 @@ export class TemporaryEntity extends Struct implements Filterable {
   static new(id: EntityId, collection: CollectionId, state: State): Result<TemporaryEntity, RetrievalError> {
     let _moved0 = false;
     try {
+      let _moved1 = false;
       let backends = new HashMap();
-      for (const [name, stateBuffer] of [...state.stateBuffers.deref()]) {
-        const _r1 = backendFromString(name, stateBuffer);
-        if (_r1.isErr()) return Result.Err(_r1.unwrapErr());
-        let _moved2 = false;
-        const backend = _r1.unwrap();
-        try {
-          _moved2 = true;
-          backends.set(name, backend);
-        } finally {
-          if (!_moved2) backend.drop();
-        }
-      }
-      let _moved4 = false;
-      const _b3 = new RwLock(new EntityInnerState(state.head.clone(), backends));
       try {
-        let _moved6 = false;
-        const _b5 = new EntityKind('Primary', {});
-        try {
-          const _b7 = Broadcast.new();
-          _moved4 = true;
-          _moved6 = true;
-          _moved0 = true;
-          return Result.Ok(new TemporaryEntity(Arc.new(new EntityInner(id, collection, _b3, _b5, _b7))));
-        } finally {
-          if (!_moved6) dropOwned(_b5);
+        for (const [name, stateBuffer] of [...state.stateBuffers.deref()]) {
+          const _r2 = backendFromString(name, stateBuffer);
+          if (_r2.isErr()) return Result.Err(_r2.unwrapErr());
+          let _moved3 = false;
+          const backend = _r2.unwrap();
+          try {
+            _moved3 = true;
+            backends.set(name, backend);
+          } finally {
+            if (!_moved3) backend.drop();
+          }
         }
+        const _b4 = state.head.clone();
+        _moved0 = true;
+        _moved1 = true;
+        return Result.Ok(new TemporaryEntity(Arc.new(new EntityInner(id, collection, new RwLock(new EntityInnerState(_b4, backends)), new EntityKind('Primary', {}), Broadcast.new()))));
       } finally {
-        if (!_moved4) dropOwned(_b3);
+        if (!_moved1) dropOwned(backends);
       }
     } finally {
       if (!_moved0) collection.drop();

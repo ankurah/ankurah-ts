@@ -2,7 +2,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { Status, SubscriptionRelay } from './client_relay';
-import { AnyhowError, Arc, Mutex, Result, Struct, dropOwned, valueEquals } from '@ankurah/base';
+import { AnyhowError, Arc, Mutex, Result, Struct, dropOwned } from '@ankurah/base';
 import { RequestError } from '../error';
 import { Predicate, Selection } from '@ankurah/ankql';
 import { CollectionId, EntityId, QueryId } from '@ankurah/proto';
@@ -174,7 +174,7 @@ describe('client_relay unit tests', () => {
     try {
       const mockSender = Arc.new(MockMessageSender.new());
       try {
-        relay.setNode(mockSender.clone());
+        relay.setNode(mockSender.clone()).expect('Failed to set message sender');
         const queryId = proto.QueryId.new();
         const collectionId = createTestCollectionId();
         try {
@@ -219,7 +219,7 @@ describe('client_relay unit tests', () => {
               if (!(((_v1) => {
                 if (!(_v1 != null && (_v1.is('Established')))) return false;
                 const { _0: establishedPeerId } = _v1.value;
-                return valueEquals(establishedPeerId, peerId);
+                return establishedPeerId.equals(peerId);
               })(relay.getStatus(queryId)))) throw new Error('assertion failed');
             } finally {
               dropOwned(sentRequests);
@@ -243,7 +243,7 @@ describe('client_relay unit tests', () => {
     try {
       const mockSender = Arc.new(MockMessageSender.new());
       try {
-        relay.setNode(mockSender.clone());
+        relay.setNode(mockSender.clone()).expect('Failed to set message sender');
         const queryId = proto.QueryId.new();
         const collectionId = createTestCollectionId();
         try {
@@ -273,7 +273,7 @@ describe('client_relay unit tests', () => {
             if (!(((_v) => {
               if (!(_v != null && (_v.is('Established')))) return false;
               const { _0: establishedPeerId } = _v.value;
-              return valueEquals(establishedPeerId, peerId);
+              return establishedPeerId.equals(peerId);
             })(relay.getStatus(queryId)))) throw new Error('assertion failed');
             relay.notifyPeerDisconnected(peerId);
             if (!(((_v1) => {
@@ -299,7 +299,7 @@ describe('client_relay unit tests', () => {
     try {
       const mockSender = Arc.new(MockMessageSender.new());
       try {
-        relay.setNode(mockSender.clone());
+        relay.setNode(mockSender.clone()).expect('Failed to set message sender');
         const queryId = proto.QueryId.new();
         const collectionId = createTestCollectionId();
         try {
@@ -344,7 +344,7 @@ describe('client_relay unit tests', () => {
               if (!(((_v1) => {
                 if (!(_v1 != null && (_v1.is('Established')))) return false;
                 const { _0: establishedPeerId } = _v1.value;
-                return valueEquals(establishedPeerId, peerId);
+                return establishedPeerId.equals(peerId);
               })(relay.getStatus(queryId)))) throw new Error('assertion failed');
             } finally {
               dropOwned(sentRequests);
@@ -368,7 +368,7 @@ describe('client_relay unit tests', () => {
     try {
       const mockSender = Arc.new(MockMessageSender.new());
       try {
-        relay.setNode(mockSender.clone());
+        relay.setNode(mockSender.clone()).expect('Failed to set message sender');
         const queryId = proto.QueryId.new();
         const collectionId = createTestCollectionId();
         try {
@@ -403,7 +403,7 @@ describe('client_relay unit tests', () => {
             if (!(((_v) => {
               if (!(_v != null && (_v.is('Established')))) return false;
               const { _0: establishedPeerId } = _v.value;
-              return valueEquals(establishedPeerId, peerId);
+              return establishedPeerId.equals(peerId);
             })(relay.getStatus(queryId)))) throw new Error('assertion failed');
             relay.notifyPeerDisconnected(peerId);
             if (!(((_v1) => {
@@ -443,7 +443,7 @@ describe('client_relay unit tests', () => {
     try {
       const mockSender = Arc.new(MockMessageSender.new());
       try {
-        relay.setNode(mockSender.clone());
+        relay.setNode(mockSender.clone()).expect('Failed to set message sender');
         const retryableQueryId = proto.QueryId.new();
         const nonRetryableQueryId = proto.QueryId.new();
         const collectionId = createTestCollectionId();
@@ -531,7 +531,7 @@ describe('client_relay unit tests', () => {
               if (!(((_v2) => {
                 if (!(_v2 != null && (_v2.is('Established')))) return false;
                 const { _0: establishedPeerId } = _v2.value;
-                return valueEquals(establishedPeerId, peerId);
+                return establishedPeerId.equals(peerId);
               })(relay.getStatus(retryableQueryId)))) throw new Error('assertion failed');
               if (!(((_v3) => {
                 if (!(_v3 != null && (_v3.is('Failed')))) return false;
@@ -559,7 +559,7 @@ describe('client_relay unit tests', () => {
     try {
       const mockSender = Arc.new(MockMessageSender.new());
       try {
-        relay.setNode(mockSender.clone());
+        relay.setNode(mockSender.clone()).expect('Failed to set message sender');
         const queryId = proto.QueryId.new();
         const collectionId = createTestCollectionId();
         try {
@@ -589,7 +589,7 @@ describe('client_relay unit tests', () => {
             if (!(((_v) => {
               if (!(_v != null && (_v.is('Established')))) return false;
               const { _0: establishedPeerId } = _v.value;
-              return valueEquals(establishedPeerId, peerId);
+              return establishedPeerId.equals(peerId);
             })(relay.getStatus(queryId)))) throw new Error('assertion failed');
             mockSender.value.clearSentRequests();
             relay.unsubscribePredicate(queryId);
@@ -659,7 +659,7 @@ describe('client_relay unit tests', () => {
               if (!(_v != null && (_v.is('PendingRemote')))) return false;
               return true;
             })(relay.getStatus(queryId)))) throw new Error('assertion failed');
-            relay.setNode(mockSender.clone());
+            relay.setNode(mockSender.clone()).expect('Failed to set message sender');
             await futuresTimer.Delay.new(time.Duration.fromMillis(10n));
             if (!(((_v1) => {
               if (!(_v1 != null && (_v1.is('PendingRemote')))) return false;
@@ -676,7 +676,7 @@ describe('client_relay unit tests', () => {
             if (!(((_v2) => {
               if (!(_v2 != null && (_v2.is('Established')))) return false;
               const { _0: establishedPeerId } = _v2.value;
-              return valueEquals(establishedPeerId, peerId);
+              return establishedPeerId.equals(peerId);
             })(relay.getStatus(queryId)))) throw new Error('assertion failed');
             const _t8 = mockSender.value.getSentRequests();
             try {
@@ -703,7 +703,7 @@ describe('client_relay unit tests', () => {
     try {
       const mockSender = Arc.new(MockMessageSender.new());
       try {
-        relay.setNode(mockSender.clone());
+        relay.setNode(mockSender.clone()).expect('Failed to set message sender');
         const queryId = proto.QueryId.new();
         const collectionId = createTestCollectionId();
         try {

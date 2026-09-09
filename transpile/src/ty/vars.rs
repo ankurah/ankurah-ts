@@ -157,6 +157,16 @@ impl Unknowns for BodyVars<'_> {
             (Ty::Var(x), Ty::Var(y)) if x == y => Some(Ok(())),
             (Ty::Var(x), other) => Some(self.table.assign(*x, other)),
             (other, Ty::Var(y)) => Some(self.table.assign(*y, other)),
+            // A bound and a type that meets it are not equal and not a
+            // mismatch: `Arc<dyn TNode<CD>>` accepts an `Arc<MockNode>` by
+            // coercion. The walk stops here rather than refusing, and what the
+            // bound projects is constrained where the argument is read.
+            (Ty::Dyn { .. } | Ty::ImplTrait { .. }, other)
+            | (other, Ty::Dyn { .. } | Ty::ImplTrait { .. })
+                if !matches!(other, Ty::Dyn { .. } | Ty::ImplTrait { .. }) =>
+            {
+                Some(Ok(()))
+            }
             _ => None,
         }
     }
@@ -214,6 +224,24 @@ mod tests {
         let known = named(1, vec![Ty::Prim(Prim::U8)]);
         assert_eq!(table.unify(&pending, &known), Ok(()));
         assert_eq!(table.resolve(&pending), known);
+    }
+
+    #[test]
+    fn a_bound_and_a_type_that_meets_it_are_neither_equal_nor_a_mismatch() {
+        // `Arc<dyn Trait>` accepts an `Arc<Concrete>` by coercion, so the walk
+        // stops at the bound rather than refusing; what the bound projects is
+        // constrained where the argument is read.
+        let mut table = InferTable::new();
+        let v = Ty::Var(table.fresh());
+        let bound = Ty::Dyn {
+            traits: vec![crate::ty::TraitRef {
+                id: TypeId(9),
+                args: Vec::new(),
+                bindings: Vec::new(),
+            }],
+        };
+        assert_eq!(table.unify(&named(1, vec![bound]), &named(1, vec![Ty::Str])), Ok(()));
+        assert_eq!(table.resolve(&v), v, "nothing was bound by a coercion");
     }
 
     #[test]

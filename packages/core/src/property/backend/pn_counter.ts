@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/property/backend/pn_counter.rs
-import { Struct, Result, Arc, RwLock, unsupported, HashMap } from '@ankurah/base';
+import { Struct, Result, Arc, RwLock, dropOwned, unsupported, HashMap } from '@ankurah/base';
 import { Clock, Operation } from '@ankurah/proto';
 import { MutationError, RetrievalError, StateError } from '../../error';
 import { Value } from '../../value/index';
@@ -70,11 +70,17 @@ export class PNBackend extends Struct implements PropertyBackend {
   propertyValues(): HashMap<PropertyName, Value> {
     const values = this.values.value.read();
     try {
+      let _moved0 = false;
       let map = new HashMap();
-      for (const [property, data] of [...values.value]) {
-        map.set(property, Value.Number(data.value));
+      try {
+        for (const [property, data] of [...values.value]) {
+          map.set(property, Value.Number(data.value));
+        }
+        _moved0 = true;
+        return map;
+      } finally {
+        if (!_moved0) dropOwned(map);
       }
-      return map;
     } finally {
       values.drop();
     }

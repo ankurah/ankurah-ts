@@ -45,7 +45,8 @@ impl BodyTranslator<'_> {
         // type only a later use decides is already known at the statement that
         // binds it — and every ownership question below reads a settled type.
         if let Some(tc) = &self.types {
-            tc.borrow_mut().collect_constraints(block);
+            tc.borrow_mut()
+                .collect_constraints(block, self.fn_return.as_ref());
         }
         let owned = self.claim_params(block, params);
         let body = self.translate_block_stmts(block);

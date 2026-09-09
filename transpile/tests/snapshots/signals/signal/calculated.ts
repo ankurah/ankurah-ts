@@ -50,7 +50,7 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
         let _moved4 = false;
         const _b3 = Broadcast.new();
         try {
-          const _b5 = new RwLock(new HashMap());
+          const _b5 = new RwLock(new HashMap<BroadcastId, SubscriptionEntry>());
           _moved2 = true;
           _moved4 = true;
           _moved0 = true;

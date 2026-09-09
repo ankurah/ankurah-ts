@@ -50,7 +50,7 @@ pub const TEXT_ONLY: [(&str, &str); 4] = [
 /// README already doubts. None of them is a reason to relax the check.
 /// What each golden still fails to compile with, as one entry per error:
 /// `<file>:<code>`, sorted. Every entry is a decision somebody read.
-pub const TYPECHECK_DEBT: [(&str, &[&str], &str); 2] = [
+pub const TYPECHECK_DEBT: [(&str, &[&str], &str); 3] = [
     (
         "blanket_free_fn",
         &["blanket_free_fn/run.test.ts:TS2345"],
@@ -60,6 +60,18 @@ pub const TYPECHECK_DEBT: [(&str, &[&str], &str); 2] = [
          inside the function now goes through the run-time dispatcher and reaches every impl; \
          what is left is the signature, and what a bound with a blanket impl behind it should \
          emit as is open",
+    ),
+    (
+        "an_item_projected_through_a_bound",
+        &[
+            "an_item_projected_through_a_bound/input.ts:TS18046",
+            "an_item_projected_through_a_bound/input.ts:TS18046",
+        ],
+        "the engine reads `F` off what `I: IntoIterator<Item = F>` projects through the \
+         argument, and types the holder `Holder<Tag>`. TypeScript does not infer a type \
+         parameter from another parameter's constraint: `new<F, I extends Iterable<F>>` \
+         handed a `Tag[]` settles `I` and leaves `F` as `unknown`. What a bound should emit \
+         as is the open question the two lines below record",
     ),
     (
         "a_constructor_typed_by_its_closure",

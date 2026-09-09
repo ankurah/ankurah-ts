@@ -88,6 +88,8 @@ impl TypeContext<'_> {
                             "the trait has no declaration here",
                         crate::registry::Undecided::OpenSubject =>
                             "the subject is still a type parameter",
+                        crate::registry::Undecided::Unsettled =>
+                            "the subject is a type the engine has not settled",
                         crate::registry::Undecided::DepthLimit => "the search ran too deep",
                     }
                 ),
@@ -199,7 +201,10 @@ impl TypeContext<'_> {
             }
         }
 
-        // A free function declared in reach.
+        // A free function declared in reach. Its own parameters are read only
+        // where a closure stands at one: what a free call resolves to is its
+        // declared return type, and nothing else about it constrains this body.
+        self.note_closure_positions(call);
         match self.registry.lookup(self.module, Ns::Value, &segments) {
             Ok(Some(Def::Value(id))) => match self.registry.value(id).and_then(|v| v.ty.clone()) {
                 Some(ty) => Ok(ty),

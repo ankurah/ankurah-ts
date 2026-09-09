@@ -8,6 +8,7 @@ pub mod closures;
 mod closure_tests;
 mod context;
 mod shapes;
+mod structs;
 #[cfg(test)]
 mod context_tests;
 pub mod expected;

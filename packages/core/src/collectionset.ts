@@ -15,7 +15,7 @@ export class CollectionSet<SE extends StorageEngine> extends Struct {
   static new<SE>(storageEngine: Arc<SE>): CollectionSet<SE> {
     let _moved0 = false;
     try {
-      const _b1 = new RwLock(new HashMap());
+      const _b1 = new RwLock(new HashMap<CollectionId, StorageCollectionWrapper>());
       _moved0 = true;
       return new CollectionSet(Arc.new(new Inner(storageEngine, _b1)));
     } finally {

@@ -57,6 +57,30 @@ impl Ty {
         self.any_var(&mut |_| true)
     }
 
+    /// Does an unread projection stand anywhere inside this type?
+    ///
+    /// `I::IntoIter::Item` and `F` are one type wherever a `where` clause says
+    /// so, and that clause is read through the impl table, which cannot read it
+    /// for a parameter nothing has instantiated. A constraint over such a type
+    /// is evidence neither way.
+    pub fn mentions_projection(&self) -> bool {
+        match self {
+            Ty::Assoc { .. } => true,
+            Ty::Named { args, .. } | Ty::Tuple(args) => {
+                args.iter().any(|a| a.mentions_projection())
+            }
+            Ty::Ref { inner, .. } | Ty::Slice(inner) | Ty::Array { elem: inner, .. } => {
+                inner.mentions_projection()
+            }
+            Ty::Dyn { traits } | Ty::ImplTrait { bounds: traits } => traits
+                .iter()
+                .any(|t| t.args.iter().any(|a| a.mentions_projection())),
+            Ty::Param(_) | Ty::Prim(_) | Ty::Str | Ty::Unit | Ty::Never | Ty::Infer | Ty::Var(_) => {
+                false
+            }
+        }
+    }
+
     fn any_var(&self, pred: &mut impl FnMut(InferId) -> bool) -> bool {
         match self {
             Ty::Var(id) => pred(*id),

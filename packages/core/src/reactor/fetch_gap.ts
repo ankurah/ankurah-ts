@@ -33,76 +33,80 @@ export class QueryGapFetcher<SE extends StorageEngine, PA extends PolicyAgent> e
       _moved2 = true;
       const node = new Node(nodeInner);
       const nodeContext = new NodeAndContext(node, this.cdata.clone());
-      const _m14 = (() => {
-        {
-          const _v1 = lastEntity;
-          if (_v1 != null) {
-            const last = _v1;
-            const _m4 = (() => {
-              {
-                const _v = selection.orderBy;
-                if (_v != null) {
-                  const orderBy = _v;
-                  const _r3 = buildContinuationPredicate(selection.predicate, orderBy, last).mapErr((e) => RetrievalError.storage(io.Error.other(e)));
-                  if (_r3.isErr()) return { $jump: 'return', $value: Result.Err(_r3.unwrapErr()) };
-                  return _r3.unwrap();
-                } else {
-                return selection.predicate.clone();
-              }
-              }
-            })();
-            if ((_m4 as any)?.$jump === 'return') return _m4;
-            let _moved5 = false;
-            const gapPredicate = (_m4 as any);
-            try {
-              let _moved7 = false;
-              const _b6 = selection.orderBy.clone();
-              try {
-                const _b8 = BigInt(gapSize);
-                _moved7 = true;
-                _moved5 = true;
-                return new Selection(gapPredicate, _b6, _b8);
-              } finally {
-                if (!_moved7) dropOwned(_b6);
-              }
-            } finally {
-              if (!_moved5) gapPredicate.drop();
-            }
-          } else {
-          let _moved10 = false;
-          const _b9 = selection.predicate.clone();
-          try {
-            let _moved12 = false;
-            const _b11 = selection.orderBy.clone();
-            try {
-              const _b13 = BigInt(gapSize);
-              _moved10 = true;
-              _moved12 = true;
-              return new Selection(_b9, _b11, _b13);
-            } finally {
-              if (!_moved12) dropOwned(_b11);
-            }
-          } finally {
-            if (!_moved10) dropOwned(_b9);
-          }
-        }
-        }
-      })();
-      if ((_m14 as any)?.$jump === 'return') return (_m14 as any).$value;
-      let _moved15 = false;
-      const gapSelection = (_m14 as any);
       try {
-        _moved15 = true;
-        let _moved16 = false;
-        const matchArgs = new MatchArgs(gapSelection, false);
+        const _m14 = (() => {
+          {
+            const _v1 = lastEntity;
+            if (_v1 != null) {
+              const last = _v1;
+              const _m4 = (() => {
+                {
+                  const _v = selection.orderBy;
+                  if (_v != null) {
+                    const orderBy = _v;
+                    const _r3 = buildContinuationPredicate(selection.predicate, orderBy, last).mapErr((e) => RetrievalError.storage(io.Error.other(e)));
+                    if (_r3.isErr()) return { $jump: 'return', $value: Result.Err(_r3.unwrapErr()) };
+                    return _r3.unwrap();
+                  } else {
+                  return selection.predicate.clone();
+                }
+                }
+              })();
+              if ((_m4 as any)?.$jump === 'return') return _m4;
+              let _moved5 = false;
+              const gapPredicate = (_m4 as any);
+              try {
+                let _moved7 = false;
+                const _b6 = selection.orderBy.clone();
+                try {
+                  const _b8 = BigInt(gapSize);
+                  _moved7 = true;
+                  _moved5 = true;
+                  return new Selection(gapPredicate, _b6, _b8);
+                } finally {
+                  if (!_moved7) dropOwned(_b6);
+                }
+              } finally {
+                if (!_moved5) gapPredicate.drop();
+              }
+            } else {
+            let _moved10 = false;
+            const _b9 = selection.predicate.clone();
+            try {
+              let _moved12 = false;
+              const _b11 = selection.orderBy.clone();
+              try {
+                const _b13 = BigInt(gapSize);
+                _moved10 = true;
+                _moved12 = true;
+                return new Selection(_b9, _b11, _b13);
+              } finally {
+                if (!_moved12) dropOwned(_b11);
+              }
+            } finally {
+              if (!_moved10) dropOwned(_b9);
+            }
+          }
+          }
+        })();
+        if ((_m14 as any)?.$jump === 'return') return (_m14 as any).$value;
+        let _moved15 = false;
+        const gapSelection = (_m14 as any);
         try {
-          _moved16 = true;
-          return await nodeContext.fetchEntities(collectionId, matchArgs);
+          _moved15 = true;
+          let _moved16 = false;
+          const matchArgs = new MatchArgs(gapSelection, false);
+          try {
+            _moved16 = true;
+            return await nodeContext.fetchEntities(collectionId, matchArgs);
+          } finally {
+            if (!_moved16) matchArgs.drop();
+          }
         } finally {
-          if (!_moved16) matchArgs.drop();
+          if (!_moved15) gapSelection.drop();
         }
       } finally {
-        if (!_moved15) gapSelection.drop();
+        nodeContext.drop();
       }
     } finally {
       if (!_moved2) nodeInner.drop();

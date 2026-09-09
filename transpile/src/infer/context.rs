@@ -46,6 +46,15 @@ pub struct TypeContext<'a> {
     /// left a type for a later use to decide, and what nothing decides is
     /// reported rather than filled in.
     pub(super) vars: std::cell::RefCell<InferTable>,
+    /// What the position each closure stands in requires of it, keyed by where
+    /// the closure is written.
+    ///
+    /// A closure's parameters come from its position (spec 4.5), and the call
+    /// carrying it reads that position before the constraint walk reaches the
+    /// closure's own body. Without the record the walk types the body with the
+    /// parameters standing for nothing.
+    pub(super) closure_wants:
+        std::cell::RefCell<std::collections::HashMap<crate::body::Position, Ty>>,
     pub sink: &'a DiagSink,
 }
 
@@ -73,6 +82,7 @@ impl<'a> TypeContext<'a> {
             self_ty,
             closure_params: std::cell::RefCell::new(Vec::new()),
             vars: std::cell::RefCell::new(InferTable::new()),
+            closure_wants: std::cell::RefCell::new(std::collections::HashMap::new()),
             sink,
         }
     }
@@ -425,7 +435,19 @@ impl<'a> TypeContext<'a> {
             // writes: `#[async_trait]` is ignored and no `Future` is wrapped
             // around anything (spec 4.10). So awaiting one yields exactly what
             // the call already had.
-            syn::Expr::Await(await_expr) => self.resolve_expr(&await_expr.base),
+            // A call to an `async fn` is modelled as returning what it writes
+            // (spec 4.10), so awaiting one is the identity. A value that IS a
+            // future answers with what awaiting it produces, which the impl
+            // table reads off `Future::Output`.
+            syn::Expr::Await(await_expr) => {
+                let base = self.resolve_expr(&await_expr.base)?;
+                let output = self
+                    .project_through(&base, "std::future::Future", "Output")
+                    // A projection the impl table did not read through comes
+                    // back as a projection, which says less than the base does.
+                    .filter(|ty| !ty.mentions_projection() && !ty.mentions_infer());
+                Ok(output.unwrap_or(base))
+            }
 
             // `e?` is `T` whether or not the error type has to be converted.
             // What the position wants of the `?` is what it wants of the
@@ -849,63 +871,6 @@ impl<'a> TypeContext<'a> {
     }
 
 
-
-    pub(crate) fn resolve_struct_literal(&self, lit: &syn::ExprStruct) -> Result<Ty, Diag> {
-        let ty = syn::Type::Path(syn::TypePath {
-            qself: lit.qself.clone(),
-            path: lit.path.clone(),
-        });
-        // A struct literal may also name an enum variant: `Signal::Memo { .. }`.
-        let segments: Vec<String> = lit
-            .path
-            .segments
-            .iter()
-            .map(|s| s.ident.to_string())
-            .collect();
-        if let Some((id, _)) = self.registry.lookup_variant(self.module, &segments) {
-            let params = self
-                .registry
-                .def(id)
-                .map(|d| d.type_params.clone())
-                .unwrap_or_default();
-            return Ok(Ty::Named {
-                id,
-                args: params.into_iter().map(Ty::Param).collect(),
-            });
-        }
-
-        let resolved = self.resolve_written_type(&ty)?;
-        let Ty::Named { id, args } = &resolved else {
-            return Ok(resolved);
-        };
-        let Some(def) = self.registry.def(*id) else {
-            return Ok(resolved);
-        };
-        // A literal written without arguments — `Foo { .. }` for `Foo<T>` —
-        // takes them from the fields it was given.
-        if !args.is_empty() || def.type_params.is_empty() {
-            return Ok(resolved);
-        }
-        let params = def.type_params.clone();
-        let fields = def.fields.clone();
-        let mut subst = Subst::new();
-        for field in &lit.fields {
-            let name = member_name(&field.member);
-            let Some((_, declared)) = fields.iter().find(|(n, _)| *n == name) else {
-                continue;
-            };
-            if let Ok(actual) = self.resolve_expr(&field.expr) {
-                let _ = unify(&params, declared, &actual, &mut subst);
-            }
-        }
-        Ok(Ty::Named {
-            id: *id,
-            args: params
-                .iter()
-                .map(|p| subst.get(p).cloned().unwrap_or(Ty::Param(p.clone())))
-                .collect(),
-        })
-    }
 
     /// A path in expression position: a local, a parameter, or a constant
     /// reached through the module's own scope.

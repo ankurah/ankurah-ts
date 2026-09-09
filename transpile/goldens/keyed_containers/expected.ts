@@ -54,7 +54,15 @@ export class Lists extends Struct {
   }
 
   static new(): Lists {
-    return new Lists(new HashMap<Key, number[]>(), new HashMap<string, number[]>());
+    let _moved1 = false;
+    const _b0 = new HashMap<Key, number[]>();
+    try {
+      const _b2 = new HashMap<string, number[]>();
+      _moved1 = true;
+      return new Lists(_b0, _b2);
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   }
 
   pushDefault(k: Key, v: number): void {

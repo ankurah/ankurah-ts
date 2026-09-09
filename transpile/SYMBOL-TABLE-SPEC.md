@@ -784,8 +784,35 @@ The engine mints an unknown for each and lets the body bind it.
 - **Constraints come from the body, one source at a time.** A call's declared
   parameter against what the argument actually is, for an associated function and
   for a method alike; a `for` loop's pattern against the sequence's item; a
-  `let`'s annotation against its initialiser. A closure argument is skipped,
-  because its parameters come FROM the position it stands in.
+  `let`'s annotation against its initialiser.
+- **A bound is a capability, not a type.** `impl Fn() -> T` and a closure are
+  never the same type, and `impl IntoIterator<Item = F>` and a `Vec<Tag>` are
+  never the same type; unifying the two says something false about both. A
+  parameter whose type is a bound is constrained by what it ANSWERS — the
+  callable's output against what the value there answers when called — and by
+  what it PROJECTS — each associated type the bound names, against the same
+  projection taken through the argument's own type. A bound meeting a type that
+  merely coerces to it binds nothing and refuses nothing.
+- **A closure is typed by the position it stands in, and the position is
+  recorded.** The closure's parameters come from the bound at that position, and
+  the constraint walk meets the closure again on its way into the body, after the
+  call carrying it has read the bound. What the position requires is kept by the
+  span the closure is written at, so the walk into the body types the parameters
+  rather than leaving them standing for nothing. A free call reads its own
+  parameters only for this: what it resolves to is its declared return type.
+- **A bound whose subject is an unsettled unknown is undecided, not refused.**
+  `SubscriptionRelay::new()` reads as `SubscriptionRelay<?0, ?1>`, and the impl
+  that carries its methods is written `impl<CD: ContextData, ..>`. No impl is
+  written for an unknown, so deciding the bound would drop the impl and take
+  every method on the receiver with it; the bound travels as an obligation and
+  the next round asks it again with the answer. This is a different fact from an
+  obligation on a type parameter, which no body can settle (4.4b), and it says so
+  separately.
+- **A side still naming an unread projection is evidence neither way.**
+  `I::IntoIter::Item` IS `F` wherever a `where` clause says so, and the engine
+  reads that clause through the impl table, which cannot read it for a parameter
+  nothing has instantiated. A constraint over such a type binds nothing and
+  reports nothing.
 - **The solve runs to a fixed point.** Method resolution cannot start from a
   receiver nothing has bound, so a constraint that binds one late lets a
   constraint that could not run before it run now. The walk repeats until a round

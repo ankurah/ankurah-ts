@@ -140,13 +140,19 @@ export class YrsBackend extends Struct implements PropertyBackend {
 
   propertyValues(): HashMap<PropertyName, Value | null> {
     const properties = this.properties();
+    let _moved0 = false;
     let values = new HashMap();
-    const trx = Transact.transact(this.doc);
-    for (const propertyName of properties) {
-      const value = this.getPropertyString(trx, propertyName);
-      values.set(propertyName, value);
+    try {
+      const trx = Transact.transact(this.doc);
+      for (const propertyName of properties) {
+        const value = this.getPropertyString(trx, propertyName);
+        values.set(propertyName, value);
+      }
+      _moved0 = true;
+      return values;
+    } finally {
+      if (!_moved0) dropOwned(values);
     }
-    return values;
   }
 
   static propertyBackendName(): string {

@@ -18,7 +18,7 @@ impl TypeContext<'_> {
     ///
     /// Quiet: what this walk cannot type, the emission walk reports where it
     /// stands, and reporting here would say all of it twice.
-    pub fn collect_constraints(&mut self, block: &syn::Block) {
+    pub fn collect_constraints(&mut self, block: &syn::Block, returns: Option<&Ty>) {
         let mark = self.sink.mark();
         // A constraint that binds an unknown late lets one that could not run
         // before it run now — method resolution cannot start from a receiver
@@ -28,7 +28,14 @@ impl TypeContext<'_> {
         let mut rounds = 0usize;
         let limit = loop {
             let before = self.vars.borrow().bound_count();
-            crate::trace::without_recording(|| Prepass { tc: self }.visit_block(block));
+            crate::trace::without_recording(|| {
+                Prepass {
+                    tc: self,
+                    returns: returns.cloned(),
+                    at_body: true,
+                }
+                .visit_block(block)
+            });
             rounds += 1;
             if self.vars.borrow().bound_count() == before {
                 break None;
@@ -51,12 +58,40 @@ impl TypeContext<'_> {
 
 struct Prepass<'a, 'b> {
     tc: &'a mut TypeContext<'b>,
+    /// What the body being walked answers with: the function's declared return
+    /// type, or the closure's own while its body is walked.
+    returns: Option<Ty>,
+    /// Is the next block the function's own? Its tail is what the function
+    /// answers with; a nested block's is not.
+    at_body: bool,
 }
 
 impl Prepass<'_, '_> {
     /// The type of an expression, asked for its constraints alone.
     fn type_of(&mut self, expr: &syn::Expr) -> Option<Ty> {
         self.tc.resolve_expr(expr).ok()
+    }
+
+    /// Constrain what this expression is against what the body answers with.
+    fn answer_with(&mut self, expr: &syn::Expr) {
+        let (Some(returns), Some(found)) = (self.returns.clone(), self.type_of(expr)) else {
+            return;
+        };
+        self.tc
+            .constrain_here(syn::spanned::Spanned::span(expr), returns.peel_refs(), found.peel_refs());
+    }
+
+    /// Constrain what is being matched against what the pattern can only be
+    /// matching.
+    fn against_pattern(&mut self, scrutinee: &syn::Expr, ty: Option<&Ty>, pat: &syn::Pat) {
+        let (Some(ty), Some(shape)) = (ty, self.tc.pattern_shape(pat)) else {
+            return;
+        };
+        self.tc.constrain_here(
+            syn::spanned::Spanned::span(scrutinee),
+            ty.peel_refs(),
+            shape.peel_refs(),
+        );
     }
 
     /// A scope that holds only what a pattern binds, for the arm or the branch
@@ -71,9 +106,17 @@ impl Prepass<'_, '_> {
 
 impl<'ast> Visit<'ast> for Prepass<'_, '_> {
     fn visit_block(&mut self, block: &'ast syn::Block) {
+        let body = std::mem::take(&mut self.at_body);
         self.tc.scopes.push_block();
         for stmt in &block.stmts {
             self.visit_stmt(stmt);
+        }
+        // The function's tail is what it answers with, so it says as much about
+        // an unknown inside it as a `return` does.
+        if body {
+            if let Some(syn::Stmt::Expr(tail, None)) = block.stmts.last() {
+                self.answer_with(tail);
+            }
         }
         self.tc.scopes.pop();
     }
@@ -109,8 +152,31 @@ impl<'ast> Visit<'ast> for Prepass<'_, '_> {
                 self.visit_block(&while_expr.body);
                 self.tc.scopes.pop();
             }
+            syn::Expr::Return(ret) => {
+                syn::visit::visit_expr(self, expr);
+                if let Some(value) = &ret.expr {
+                    self.answer_with(value);
+                }
+            }
+            // A place and the value written into it are one type: `self.head =
+            // found` says what `found` is where the field is declared, and what
+            // the field holds where the value is known.
+            syn::Expr::Assign(assign) => {
+                syn::visit::visit_expr(self, expr);
+                let (Some(place), Some(value)) =
+                    (self.type_of(&assign.left), self.type_of(&assign.right))
+                else {
+                    return;
+                };
+                self.tc.constrain_here(
+                    syn::spanned::Spanned::span(&assign.right),
+                    place.peel_refs(),
+                    value.peel_refs(),
+                );
+            }
             syn::Expr::Let(let_expr) => {
                 let ty = self.type_of(&let_expr.expr);
+                self.against_pattern(&let_expr.expr, ty.as_ref(), &let_expr.pat);
                 self.tc.bind_pattern(&let_expr.pat, ty.as_ref());
             }
             // `for (entity, event) in entity_events` types both names from the
@@ -128,6 +194,7 @@ impl<'ast> Visit<'ast> for Prepass<'_, '_> {
                 let scrutinee = self.type_of(&match_expr.expr);
                 self.visit_expr(&match_expr.expr);
                 for arm in &match_expr.arms {
+                    self.against_pattern(&match_expr.expr, scrutinee.as_ref(), &arm.pat);
                     self.in_pattern_scope(&arm.pat, scrutinee.as_ref(), |pass| {
                         if let Some((_, guard)) = &arm.guard {
                             pass.visit_expr(guard);
@@ -137,9 +204,14 @@ impl<'ast> Visit<'ast> for Prepass<'_, '_> {
                 }
             }
             // A closure's parameters come from the position it stands in, which
-            // the call that carries it has already read.
+            // the call that carries it has already read and recorded.
             syn::Expr::Closure(closure) => {
-                let bindings = self.tc.closure_signature(closure, None).bindings;
+                let want = self.tc.closure_want(closure);
+                let signature = self.tc.closure_signature(closure, want.as_ref());
+                let bindings = signature.bindings;
+                // A `return` inside a closure leaves through the closure's own
+                // result, not the enclosing function's.
+                let outer = std::mem::replace(&mut self.returns, signature.ret);
                 self.tc.scopes.push_closure(Vec::new());
                 for (name, ty) in bindings {
                     match ty {
@@ -152,6 +224,7 @@ impl<'ast> Visit<'ast> for Prepass<'_, '_> {
                 }
                 self.visit_expr(&closure.body);
                 self.tc.scopes.pop();
+                self.returns = outer;
             }
             other => {
                 self.type_of(other);

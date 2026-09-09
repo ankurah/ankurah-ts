@@ -17,49 +17,85 @@ class TestItem extends Struct implements Filterable {
   }
 
   static new(pairs: [string, Value][]): TestItem {
+    let _moved0 = false;
     let values = new HashMap();
-    for (const [k, v] of pairs) {
-      values.set(k, v.clone());
+    try {
+      for (const [k, v] of pairs) {
+        values.set(k, v.clone());
+      }
+      _moved0 = true;
+      return new TestItem(values);
+    } finally {
+      if (!_moved0) dropOwned(values);
     }
-    return new TestItem(values);
   }
 
   static int(pairs: [string, number][]): TestItem {
+    let _moved0 = false;
     let values = new HashMap();
-    for (const [k, v] of pairs) {
-      values.set(k, new Value('I32', { _0: v }));
+    try {
+      for (const [k, v] of pairs) {
+        values.set(k, new Value('I32', { _0: v }));
+      }
+      _moved0 = true;
+      return new TestItem(values);
+    } finally {
+      if (!_moved0) dropOwned(values);
     }
-    return new TestItem(values);
   }
 
   static str(pairs: [string, string][]): TestItem {
+    let _moved0 = false;
     let values = new HashMap();
-    for (const [k, v] of pairs) {
-      values.set(k, new Value('String', { _0: v }));
+    try {
+      for (const [k, v] of pairs) {
+        values.set(k, new Value('String', { _0: v }));
+      }
+      _moved0 = true;
+      return new TestItem(values);
+    } finally {
+      if (!_moved0) dropOwned(values);
     }
-    return new TestItem(values);
   }
 
   static mixed(cat: string, name: string): TestItem {
+    let _moved0 = false;
     let values = new HashMap();
-    values.set('cat', new Value('String', { _0: cat }));
-    values.set('name', new Value('String', { _0: name }));
-    return new TestItem(values);
+    try {
+      values.set('cat', new Value('String', { _0: cat }));
+      values.set('name', new Value('String', { _0: name }));
+      _moved0 = true;
+      return new TestItem(values);
+    } finally {
+      if (!_moved0) dropOwned(values);
+    }
   }
 
   static catVal(cat: string, val: number): TestItem {
+    let _moved0 = false;
     let values = new HashMap();
-    values.set('cat', new Value('String', { _0: cat }));
-    values.set('val', new Value('I32', { _0: val }));
-    return new TestItem(values);
+    try {
+      values.set('cat', new Value('String', { _0: cat }));
+      values.set('val', new Value('I32', { _0: val }));
+      _moved0 = true;
+      return new TestItem(values);
+    } finally {
+      if (!_moved0) dropOwned(values);
+    }
   }
 
   static catSubcatVal(cat: string, subcat: string, val: number): TestItem {
+    let _moved0 = false;
     let values = new HashMap();
-    values.set('cat', new Value('String', { _0: cat }));
-    values.set('subcat', new Value('String', { _0: subcat }));
-    values.set('val', new Value('I32', { _0: val }));
-    return new TestItem(values);
+    try {
+      values.set('cat', new Value('String', { _0: cat }));
+      values.set('subcat', new Value('String', { _0: subcat }));
+      values.set('val', new Value('I32', { _0: val }));
+      _moved0 = true;
+      return new TestItem(values);
+    } finally {
+      if (!_moved0) dropOwned(values);
+    }
   }
 
   collection(): string {

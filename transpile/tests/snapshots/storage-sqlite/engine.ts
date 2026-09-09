@@ -24,16 +24,28 @@ export class SqliteStorageEngine extends Struct implements StorageEngine {
     const manager = SqliteConnectionManager.file(path.asRef());
     const _r0 = await bb8.Pool.builder().maxSize(DEFAULT_POOL_SIZE).build(manager);
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    let _moved1 = false;
     const pool = _r0.unwrap();
-    return Result.Ok(SqliteStorageEngine.new(pool));
+    try {
+      _moved1 = true;
+      return Result.Ok(SqliteStorageEngine.new(pool));
+    } finally {
+      if (!_moved1) dropOwned(pool);
+    }
   }
 
   static async openInMemory(): Promise<Result<SqliteStorageEngine, Error>> {
     const manager = SqliteConnectionManager.memory();
     const _r0 = await bb8.Pool.builder().maxSize(1).build(manager);
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
+    let _moved1 = false;
     const pool = _r0.unwrap();
-    return Result.Ok(SqliteStorageEngine.new(pool));
+    try {
+      _moved1 = true;
+      return Result.Ok(SqliteStorageEngine.new(pool));
+    } finally {
+      if (!_moved1) dropOwned(pool);
+    }
   }
 
   static saneName(collection: string): boolean {
@@ -647,7 +659,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
                     const [sql, params] = _r9.unwrap();
                     tracing.debug(`fetch_states SQL: ${sql} with ${params.length} params`);
                     const collectionId = this.collectionId.clone();
-                    const _r24 = await conn.withConnection(new OwnedClosure([collectionId], (c: Connection) => {
+                    const _r25 = await conn.withConnection(new OwnedClosure([collectionId], (c: Connection) => {
                       const _r10 = c.prepare(sql);
                       if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
                       let stmt = _r10.unwrap();
@@ -668,50 +680,56 @@ export class SqliteBucket extends Struct implements StorageCollection {
                       });
                       if (_r15.isErr()) return Result.Err(_r15.unwrapErr());
                       const rows = _r15.unwrap();
+                      let _moved16 = false;
                       let results = [];
-                      for (const row of rows) {
-                        const _r16 = row;
-                        if (_r16.isErr()) return Result.Err(_r16.unwrapErr());
-                        const [idStr, stateBuffer, headJson, attestationsBlob] = _r16.unwrap();
-                        const _r17 = EntityId.fromBase64(idStr).mapErr((e) => {
-                          return new rusqlite.Error('FromSqlConversionFailure', { _0: 0, _1: rusqlite.types.Type.Text, _2: io.Error.other(e) });
-                        });
-                        if (_r17.isErr()) return Result.Err(_r17.unwrapErr());
-                        const id = _r17.unwrap();
-                        const _r18 = (() => { const _r = new BincodeReader(stateBuffer); return (() => { const _m = new HashMap<string, Uint8Array>(); const _len = _r.readLength(); for (let _i = 0; _i < _len; _i++) { _m.set(_r.readString(), _r.readByteVec()); } return _m; })(); })().mapErr((e) => {
-                          return new rusqlite.Error('FromSqlConversionFailure', { _0: 1, _1: rusqlite.types.Type.Blob, _2: io.Error.other(e) });
-                        });
-                        if (_r18.isErr()) return Result.Err(_r18.unwrapErr());
-                        const stateBuffers = _r18.unwrap();
-                        const _r19 = serde_json.parse(headJson).andThen((v) => Clock.fromJson(v)).mapErr((e) => {
-                          return new rusqlite.Error('FromSqlConversionFailure', { _0: 2, _1: rusqlite.types.Type.Text, _2: io.Error.other(e) });
-                        });
-                        if (_r19.isErr()) return Result.Err(_r19.unwrapErr());
-                        let _moved20 = false;
-                        const head = _r19.unwrap();
-                        try {
-                          const _r21 = (() => { const _r = new BincodeReader(attestationsBlob); return AttestationSet.decode(_r); })().mapErr((e) => {
-                            return new rusqlite.Error('FromSqlConversionFailure', { _0: 3, _1: rusqlite.types.Type.Blob, _2: io.Error.other(e) });
+                      try {
+                        for (const row of rows) {
+                          const _r17 = row;
+                          if (_r17.isErr()) return Result.Err(_r17.unwrapErr());
+                          const [idStr, stateBuffer, headJson, attestationsBlob] = _r17.unwrap();
+                          const _r18 = EntityId.fromBase64(idStr).mapErr((e) => {
+                            return new rusqlite.Error('FromSqlConversionFailure', { _0: 0, _1: rusqlite.types.Type.Text, _2: io.Error.other(e) });
                           });
-                          if (_r21.isErr()) return Result.Err(_r21.unwrapErr());
-                          let _moved22 = false;
-                          const attestations = _r21.unwrap();
+                          if (_r18.isErr()) return Result.Err(_r18.unwrapErr());
+                          const id = _r18.unwrap();
+                          const _r19 = (() => { const _r = new BincodeReader(stateBuffer); return (() => { const _m = new HashMap<string, Uint8Array>(); const _len = _r.readLength(); for (let _i = 0; _i < _len; _i++) { _m.set(_r.readString(), _r.readByteVec()); } return _m; })(); })().mapErr((e) => {
+                            return new rusqlite.Error('FromSqlConversionFailure', { _0: 1, _1: rusqlite.types.Type.Blob, _2: io.Error.other(e) });
+                          });
+                          if (_r19.isErr()) return Result.Err(_r19.unwrapErr());
+                          const stateBuffers = _r19.unwrap();
+                          const _r20 = serde_json.parse(headJson).andThen((v) => Clock.fromJson(v)).mapErr((e) => {
+                            return new rusqlite.Error('FromSqlConversionFailure', { _0: 2, _1: rusqlite.types.Type.Text, _2: io.Error.other(e) });
+                          });
+                          if (_r20.isErr()) return Result.Err(_r20.unwrapErr());
+                          let _moved21 = false;
+                          const head = _r20.unwrap();
                           try {
-                            const _b23 = new StateBuffers(stateBuffers);
-                            _moved20 = true;
-                            _moved22 = true;
-                            results.push(new Attested(new EntityState(id, collectionId.clone(), new State(_b23, head)), attestations));
+                            const _r22 = (() => { const _r = new BincodeReader(attestationsBlob); return AttestationSet.decode(_r); })().mapErr((e) => {
+                              return new rusqlite.Error('FromSqlConversionFailure', { _0: 3, _1: rusqlite.types.Type.Blob, _2: io.Error.other(e) });
+                            });
+                            if (_r22.isErr()) return Result.Err(_r22.unwrapErr());
+                            let _moved23 = false;
+                            const attestations = _r22.unwrap();
+                            try {
+                              const _b24 = new StateBuffers(stateBuffers);
+                              _moved21 = true;
+                              _moved23 = true;
+                              results.push(new Attested(new EntityState(id, collectionId.clone(), new State(_b24, head)), attestations));
+                            } finally {
+                              if (!_moved23) attestations.drop();
+                            }
                           } finally {
-                            if (!_moved22) attestations.drop();
+                            if (!_moved21) head.drop();
                           }
-                        } finally {
-                          if (!_moved20) head.drop();
                         }
+                        _moved16 = true;
+                        return Result.Ok(results);
+                      } finally {
+                        if (!_moved16) dropOwned(results);
                       }
-                      return Result.Ok(results);
                     }));
-                    if (_r24.isErr()) return Result.Err(RetrievalError.fromSqliteError(_r24.unwrapErr()));
-                    let results = _r24.unwrap();
+                    if (_r25.isErr()) return Result.Err(RetrievalError.fromSqliteError(_r25.unwrapErr()));
+                    let results = _r25.unwrap();
                     if (needsPostFilter) {
                       tracing.debug(`Post-filtering ${results.len()} results`);
                       results = postFilterStates(results, remainingPredicate, this.collectionId);
@@ -836,53 +854,59 @@ export class SqliteBucket extends Struct implements StorageCollection {
           });
           if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
           const rows = _r7.unwrap();
+          let _moved8 = false;
           let events = [];
-          for (const row of rows) {
-            const _r8 = row;
-            if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
-            const [entityIdStr, operationsBlob, parentJson, attestationsBlob] = _r8.unwrap();
-            const _r9 = EntityId.fromBase64(entityIdStr).mapErr((e) => {
-              return new rusqlite.Error('FromSqlConversionFailure', { _0: 1, _1: rusqlite.types.Type.Text, _2: io.Error.other(e) });
-            });
-            if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
-            const entityId = _r9.unwrap();
-            const _r10 = (() => { const _r = new BincodeReader(operationsBlob); return OperationSet.decode(_r); })().mapErr((e) => {
-              return new rusqlite.Error('FromSqlConversionFailure', { _0: 2, _1: rusqlite.types.Type.Blob, _2: io.Error.other(e) });
-            });
-            if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
-            let _moved11 = false;
-            const operations = _r10.unwrap();
-            try {
-              const _r12 = serde_json.parse(parentJson).andThen((v) => Clock.fromJson(v)).mapErr((e) => {
-                return new rusqlite.Error('FromSqlConversionFailure', { _0: 3, _1: rusqlite.types.Type.Text, _2: io.Error.other(e) });
+          try {
+            for (const row of rows) {
+              const _r9 = row;
+              if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
+              const [entityIdStr, operationsBlob, parentJson, attestationsBlob] = _r9.unwrap();
+              const _r10 = EntityId.fromBase64(entityIdStr).mapErr((e) => {
+                return new rusqlite.Error('FromSqlConversionFailure', { _0: 1, _1: rusqlite.types.Type.Text, _2: io.Error.other(e) });
               });
-              if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
-              let _moved13 = false;
-              const parent = _r12.unwrap();
+              if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
+              const entityId = _r10.unwrap();
+              const _r11 = (() => { const _r = new BincodeReader(operationsBlob); return OperationSet.decode(_r); })().mapErr((e) => {
+                return new rusqlite.Error('FromSqlConversionFailure', { _0: 2, _1: rusqlite.types.Type.Blob, _2: io.Error.other(e) });
+              });
+              if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
+              let _moved12 = false;
+              const operations = _r11.unwrap();
               try {
-                const _r14 = (() => { const _r = new BincodeReader(attestationsBlob); return AttestationSet.decode(_r); })().mapErr((e) => {
-                  return new rusqlite.Error('FromSqlConversionFailure', { _0: 4, _1: rusqlite.types.Type.Blob, _2: io.Error.other(e) });
+                const _r13 = serde_json.parse(parentJson).andThen((v) => Clock.fromJson(v)).mapErr((e) => {
+                  return new rusqlite.Error('FromSqlConversionFailure', { _0: 3, _1: rusqlite.types.Type.Text, _2: io.Error.other(e) });
                 });
-                if (_r14.isErr()) return Result.Err(_r14.unwrapErr());
-                let _moved15 = false;
-                const attestations = _r14.unwrap();
+                if (_r13.isErr()) return Result.Err(_r13.unwrapErr());
+                let _moved14 = false;
+                const parent = _r13.unwrap();
                 try {
-                  const _b16 = collectionId.clone();
-                  _moved11 = true;
-                  _moved13 = true;
-                  _moved15 = true;
-                  events.push(new Attested(new Event(_b16, entityId, operations, parent), attestations));
+                  const _r15 = (() => { const _r = new BincodeReader(attestationsBlob); return AttestationSet.decode(_r); })().mapErr((e) => {
+                    return new rusqlite.Error('FromSqlConversionFailure', { _0: 4, _1: rusqlite.types.Type.Blob, _2: io.Error.other(e) });
+                  });
+                  if (_r15.isErr()) return Result.Err(_r15.unwrapErr());
+                  let _moved16 = false;
+                  const attestations = _r15.unwrap();
+                  try {
+                    const _b17 = collectionId.clone();
+                    _moved12 = true;
+                    _moved14 = true;
+                    _moved16 = true;
+                    events.push(new Attested(new Event(_b17, entityId, operations, parent), attestations));
+                  } finally {
+                    if (!_moved16) attestations.drop();
+                  }
                 } finally {
-                  if (!_moved15) attestations.drop();
+                  if (!_moved14) parent.drop();
                 }
               } finally {
-                if (!_moved13) parent.drop();
+                if (!_moved12) operations.drop();
               }
-            } finally {
-              if (!_moved11) operations.drop();
             }
+            _moved8 = true;
+            return Result.Ok(events);
+          } finally {
+            if (!_moved8) dropOwned(events);
           }
-          return Result.Ok(events);
         }, undefined, true))).mapErr((e) => new RetrievalError('StorageError', { _0: e }));
       } finally {
         dropOwned(conn);
@@ -928,48 +952,54 @@ export class SqliteBucket extends Struct implements StorageCollection {
         });
         if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
         const rows = _r6.unwrap();
+        let _moved7 = false;
         let events = [];
-        for (const row of rows) {
-          const _r7 = row;
-          if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
-          const [operationsBlob, parentJson, attestationsBlob] = _r7.unwrap();
-          const _r8 = (() => { const _r = new BincodeReader(operationsBlob); return OperationSet.decode(_r); })().mapErr((e) => {
-            return new rusqlite.Error('FromSqlConversionFailure', { _0: 1, _1: rusqlite.types.Type.Blob, _2: io.Error.other(e) });
-          });
-          if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
-          let _moved9 = false;
-          const operations = _r8.unwrap();
-          try {
-            const _r10 = serde_json.parse(parentJson).andThen((v) => Clock.fromJson(v)).mapErr((e) => {
-              return new rusqlite.Error('FromSqlConversionFailure', { _0: 2, _1: rusqlite.types.Type.Text, _2: io.Error.other(e) });
+        try {
+          for (const row of rows) {
+            const _r8 = row;
+            if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+            const [operationsBlob, parentJson, attestationsBlob] = _r8.unwrap();
+            const _r9 = (() => { const _r = new BincodeReader(operationsBlob); return OperationSet.decode(_r); })().mapErr((e) => {
+              return new rusqlite.Error('FromSqlConversionFailure', { _0: 1, _1: rusqlite.types.Type.Blob, _2: io.Error.other(e) });
             });
-            if (_r10.isErr()) return Result.Err(_r10.unwrapErr());
-            let _moved11 = false;
-            const parent = _r10.unwrap();
+            if (_r9.isErr()) return Result.Err(_r9.unwrapErr());
+            let _moved10 = false;
+            const operations = _r9.unwrap();
             try {
-              const _r12 = (() => { const _r = new BincodeReader(attestationsBlob); return AttestationSet.decode(_r); })().mapErr((e) => {
-                return new rusqlite.Error('FromSqlConversionFailure', { _0: 3, _1: rusqlite.types.Type.Blob, _2: io.Error.other(e) });
+              const _r11 = serde_json.parse(parentJson).andThen((v) => Clock.fromJson(v)).mapErr((e) => {
+                return new rusqlite.Error('FromSqlConversionFailure', { _0: 2, _1: rusqlite.types.Type.Text, _2: io.Error.other(e) });
               });
-              if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
-              let _moved13 = false;
-              const attestations = _r12.unwrap();
+              if (_r11.isErr()) return Result.Err(_r11.unwrapErr());
+              let _moved12 = false;
+              const parent = _r11.unwrap();
               try {
-                const _b14 = collectionId.clone();
-                _moved9 = true;
-                _moved11 = true;
-                _moved13 = true;
-                events.push(new Attested(new Event(_b14, entityId, operations, parent), attestations));
+                const _r13 = (() => { const _r = new BincodeReader(attestationsBlob); return AttestationSet.decode(_r); })().mapErr((e) => {
+                  return new rusqlite.Error('FromSqlConversionFailure', { _0: 3, _1: rusqlite.types.Type.Blob, _2: io.Error.other(e) });
+                });
+                if (_r13.isErr()) return Result.Err(_r13.unwrapErr());
+                let _moved14 = false;
+                const attestations = _r13.unwrap();
+                try {
+                  const _b15 = collectionId.clone();
+                  _moved10 = true;
+                  _moved12 = true;
+                  _moved14 = true;
+                  events.push(new Attested(new Event(_b15, entityId, operations, parent), attestations));
+                } finally {
+                  if (!_moved14) attestations.drop();
+                }
               } finally {
-                if (!_moved13) attestations.drop();
+                if (!_moved12) parent.drop();
               }
             } finally {
-              if (!_moved11) parent.drop();
+              if (!_moved10) operations.drop();
             }
-          } finally {
-            if (!_moved9) operations.drop();
           }
+          _moved7 = true;
+          return Result.Ok(events);
+        } finally {
+          if (!_moved7) dropOwned(events);
         }
-        return Result.Ok(events);
       }, undefined, true))).mapErr((e) => new RetrievalError('StorageError', { _0: e }));
     } finally {
       dropOwned(conn);

@@ -29,17 +29,23 @@ export class Transaction extends Drop {
       let _moved2 = false;
       const _b1 = TransactionId.new();
       try {
+        let _moved4 = false;
         const _b3 = AppendOnlyVec.new();
-        let _moved5 = false;
-        const _b4 = Arc.new(true);
         try {
-          const _b6 = new RwLock(new HashSet<EntityId>());
-          _moved2 = true;
-          _moved5 = true;
-          _moved0 = true;
-          return new Transaction(dyncontext, _b1, _b3, _b4, _b6);
+          let _moved6 = false;
+          const _b5 = Arc.new(true);
+          try {
+            const _b7 = new RwLock(new HashSet<EntityId>());
+            _moved2 = true;
+            _moved4 = true;
+            _moved6 = true;
+            _moved0 = true;
+            return new Transaction(dyncontext, _b1, _b3, _b5, _b7);
+          } finally {
+            if (!_moved6) dropOwned(_b5);
+          }
         } finally {
-          if (!_moved5) dropOwned(_b4);
+          if (!_moved4) dropOwned(_b3);
         }
       } finally {
         if (!_moved2) dropOwned(_b1);

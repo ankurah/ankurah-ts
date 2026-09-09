@@ -968,42 +968,46 @@ export class Planner extends Struct {
       let uniquePlans = [];
       try {
         let seen = new HashSet();
-        _moved0 = true;
-        const _seq3 = plans;
-        let _at4 = 0;
         try {
-          while (_at4 < _seq3.length) {
-            const plan = _seq3[_at4++];
-            let _moved2 = false;
-            try {
-              plan.match({
-                Index: (v) => {
-                  const indexSpec = v.indexSpec;
-                  const scanDirection = v.scanDirection;
-                  const key = [indexSpec.keyparts.map((e) => e.clone()), scanDirection];
-                  if (seen.insert(key)) {
+          _moved0 = true;
+          const _seq3 = plans;
+          let _at4 = 0;
+          try {
+            while (_at4 < _seq3.length) {
+              const plan = _seq3[_at4++];
+              let _moved2 = false;
+              try {
+                plan.match({
+                  Index: (v) => {
+                    const indexSpec = v.indexSpec;
+                    const scanDirection = v.scanDirection;
+                    const key = [indexSpec.keyparts.map((e) => e.clone()), scanDirection];
+                    if (seen.insert(key)) {
+                      _moved2 = true;
+                      uniquePlans.push(plan);
+                    }
+                  },
+                  EmptyScan: () => {
                     _moved2 = true;
                     uniquePlans.push(plan);
-                  }
-                },
-                EmptyScan: () => {
-                  _moved2 = true;
-                  uniquePlans.push(plan);
-                },
-                TableScan: () => {
-                  _moved2 = true;
-                  uniquePlans.push(plan);
-                },
-              });
-            } finally {
-              if (!_moved2) plan.drop();
+                  },
+                  TableScan: () => {
+                    _moved2 = true;
+                    uniquePlans.push(plan);
+                  },
+                });
+              } finally {
+                if (!_moved2) plan.drop();
+              }
             }
+          } finally {
+            dropOwned(_seq3.slice(_at4));
           }
+          _moved1 = true;
+          return uniquePlans;
         } finally {
-          dropOwned(_seq3.slice(_at4));
+          dropOwned(seen);
         }
-        _moved1 = true;
-        return uniquePlans;
       } finally {
         if (!_moved1) dropOwned(uniquePlans);
       }

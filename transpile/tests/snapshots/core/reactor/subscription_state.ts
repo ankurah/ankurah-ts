@@ -51,12 +51,18 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
     let _moved1 = false;
     try {
       try {
+        let _moved3 = false;
         const _b2 = new HashMap();
-        const _b3 = new HashSet();
-        const _b4 = new HashMap();
-        _moved1 = true;
-        _moved0 = true;
-        return new Subscription(Arc.new(new Inner(ReactorSubscriptionId.new(), new Mutex(new State(_b2, _b3, _b4, broadcast)), watcherSet)));
+        try {
+          const _b4 = new HashSet<EntityId>();
+          const _b5 = new HashMap();
+          _moved3 = true;
+          _moved1 = true;
+          _moved0 = true;
+          return new Subscription(Arc.new(new Inner(ReactorSubscriptionId.new(), new Mutex(new State(_b2, _b4, _b5, broadcast)), watcherSet)));
+        } finally {
+          if (!_moved3) dropOwned(_b2);
+        }
       } finally {
         if (!_moved1) watcherSet.drop();
       }

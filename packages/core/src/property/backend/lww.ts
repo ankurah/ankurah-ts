@@ -172,24 +172,28 @@ export class LWWBackend extends Struct implements PropertyBackend {
     let values = this.values.write();
     try {
       let changedValues = new HashMap();
-      for (const [name, entry] of [...values.value]) {
-        if (!entry.committed) {
-          changedValues.set(name, entry.value.clone());
-          entry.committed = true;
-        }
-      }
-      if (changedValues.size === 0) {
-        return Result.Ok(null);
-      }
-      const _r0 = (() => { const _w = new BincodeWriter(); changedValues.encode(_w); return _w.finish(); })();
-      if (_r0.isErr()) return Result.Err(MutationError.fromBincodeError(_r0.unwrapErr()));
-      const _t1 = new LWWDiff(LWW_DIFF_VERSION, _r0.unwrap());
       try {
-        const _r2 = (() => { const _w = new BincodeWriter(); _t1.encode(_w); return _w.finish(); })();
-        if (_r2.isErr()) return Result.Err(MutationError.fromBincodeError(_r2.unwrapErr()));
-        return Result.Ok([new Operation(_r2.unwrap())]);
+        for (const [name, entry] of [...values.value]) {
+          if (!entry.committed) {
+            changedValues.set(name, entry.value.clone());
+            entry.committed = true;
+          }
+        }
+        if (changedValues.size === 0) {
+          return Result.Ok(null);
+        }
+        const _r0 = (() => { const _w = new BincodeWriter(); changedValues.encode(_w); return _w.finish(); })();
+        if (_r0.isErr()) return Result.Err(MutationError.fromBincodeError(_r0.unwrapErr()));
+        const _t1 = new LWWDiff(LWW_DIFF_VERSION, _r0.unwrap());
+        try {
+          const _r2 = (() => { const _w = new BincodeWriter(); _t1.encode(_w); return _w.finish(); })();
+          if (_r2.isErr()) return Result.Err(MutationError.fromBincodeError(_r2.unwrapErr()));
+          return Result.Ok([new Operation(_r2.unwrap())]);
+        } finally {
+          _t1.drop();
+        }
       } finally {
-        _t1.drop();
+        dropOwned(changedValues);
       }
     } finally {
       values.drop();

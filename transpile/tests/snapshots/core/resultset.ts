@@ -18,48 +18,54 @@ export class EntityResultSet<E extends AbstractEntity = Entity> extends Struct i
 
   static fromVec<E>(entities: E[], loaded: boolean): EntityResultSet<E> {
     let index = new HashMap();
+    let _moved0 = false;
     let order = [];
-    for (const [i, entity] of [...entities].entries()) {
-      index.set(entity.id(), i);
-      order.push(new EntityEntry(entity, null, false));
-    }
-    const state = new State(order, index, null, null, false);
-    let _moved1 = false;
-    const _b0 = new Mutex(state);
     try {
-      const _b2 = Broadcast.new();
-      _moved1 = true;
-      return new EntityResultSet(Arc.new(new Inner(_b0, loaded, _b2)));
+      for (const [i, entity] of [...entities].entries()) {
+        index.set(entity.id(), i);
+        order.push(new EntityEntry(entity, null, false));
+      }
+      _moved0 = true;
+      let _moved1 = false;
+      const state = new State(order, index, null, null, false);
+      try {
+        _moved1 = true;
+        return new EntityResultSet(Arc.new(new Inner(new Mutex(state), loaded, Broadcast.new())));
+      } finally {
+        if (!_moved1) state.drop();
+      }
     } finally {
-      if (!_moved1) dropOwned(_b0);
+      if (!_moved0) dropOwned(order);
     }
   }
 
   static empty<E>(): EntityResultSet<E> {
-    const state = new State([], new HashMap(), null, null, false);
-    let _moved1 = false;
-    const _b0 = new Mutex(state);
+    let _moved0 = false;
+    const state = new State([], new HashMap<EntityId, number>(), null, null, false);
     try {
-      const _b2 = Broadcast.new();
-      _moved1 = true;
-      return new EntityResultSet(Arc.new(new Inner(_b0, false, _b2)));
+      _moved0 = true;
+      return new EntityResultSet(Arc.new(new Inner(new Mutex(state), false, Broadcast.new())));
     } finally {
-      if (!_moved1) dropOwned(_b0);
+      if (!_moved0) state.drop();
     }
   }
 
   static single<E>(entity: E): EntityResultSet<E> {
+    let _moved0 = false;
     const entry = new EntityEntry(entity.clone(), null, false);
-    let state = new State([entry], new HashMap(), null, null, false);
-    state.index.insert(entity.id(), 0);
-    let _moved1 = false;
-    const _b0 = new Mutex(state);
     try {
-      const _b2 = Broadcast.new();
-      _moved1 = true;
-      return new EntityResultSet(Arc.new(new Inner(_b0, false, _b2)));
+      _moved0 = true;
+      let _moved1 = false;
+      let state = new State([entry], new HashMap<EntityId, number>(), null, null, false);
+      try {
+        state.index.set(entity.id(), 0);
+        _moved1 = true;
+        return new EntityResultSet(Arc.new(new Inner(new Mutex(state), false, Broadcast.new())));
+      } finally {
+        if (!_moved1) state.drop();
+      }
     } finally {
-      if (!_moved1) dropOwned(_b0);
+      if (!_moved0) entry.drop();
     }
   }
 
@@ -470,49 +476,55 @@ export class ResultSetWrite<E extends AbstractEntity = Entity> extends Drop {
       return false;
     }
     const sortKey = (guard.value.keySpec != null ? ((keySpec) => ResultSetWrite.computeSortKey(entity, keySpec))(guard.value.keySpec!) : null);
+    let _moved0 = false;
     const entry = new EntityEntry(entity, sortKey, false);
-    const pos = guard.value.order.binarySearchBy((existing) => {
-      const _v = [existing.sortKey, entry.sortKey];
-      if ((_v[0] != null) && (_v[1] != null)) {
-        const existingKey = _v[0];
-        const entryKey = _v[1];
-        return existingKey.compareTo(entryKey).thenWith(() => existing.entity.id().compareTo(entry.entity.id()));
-      } else if ((_v[0] != null) && (_v[1] == null)) {
-        return -1;
-      } else if ((_v[0] == null) && (_v[1] != null)) {
-        return 1;
-      } else {
-        return existing.entity.id().compareTo(entry.entity.id());
+    try {
+      const pos = guard.value.order.binarySearchBy((existing) => {
+        const _v = [existing.sortKey, entry.sortKey];
+        if ((_v[0] != null) && (_v[1] != null)) {
+          const existingKey = _v[0];
+          const entryKey = _v[1];
+          return (($c) => $c !== 0 ? $c : (() => existing.entity.id().compareTo(entry.entity.id()))())(existingKey.compareTo(entryKey));
+        } else if ((_v[0] != null) && (_v[1] == null)) {
+          return -1;
+        } else if ((_v[0] == null) && (_v[1] != null)) {
+          return 1;
+        } else {
+          return existing.entity.id().compareTo(entry.entity.id());
+        }
+      }).unwrapOrElse((pos) => pos);
+      _moved0 = true;
+      guard.value.order.splice(pos, 0, entry);
+      guard.value.index.set(id, pos);
+      for (const i of range((checkedAdd(pos, 1, 'usize')), guard.value.order.length)) {
+        const entryId = guard.value.order[i].entity.id();
+        guard.value.index.set(entryId, i);
       }
-    }).unwrapOrElse((pos) => pos);
-    guard.value.order.splice(pos, 0, entry);
-    guard.value.index.set(id, pos);
-    for (const i of range((checkedAdd(pos, 1, 'usize')), guard.value.order.length)) {
-      const entryId = guard.value.order[i].entity.id();
-      guard.value.index.set(entryId, i);
-    }
-    {
-      const _v2 = guard.value.limit;
-      if (_v2 != null) {
-        const limit = _v2;
-        if (guard.value.order.length > limit) {
-          {
-            const _v1 = guard.value.order.pop();
-            if (_v1 != null) {
-              const removedEntry = _v1;
-              try {
-                const removedId = removedEntry.entity.id();
-                guard.value.index.delete(removedId);
-              } finally {
-                removedEntry.drop();
+      {
+        const _v2 = guard.value.limit;
+        if (_v2 != null) {
+          const limit = _v2;
+          if (guard.value.order.length > limit) {
+            {
+              const _v1 = guard.value.order.pop();
+              if (_v1 != null) {
+                const removedEntry = _v1;
+                try {
+                  const removedId = removedEntry.entity.id();
+                  guard.value.index.delete(removedId);
+                } finally {
+                  removedEntry.drop();
+                }
               }
             }
           }
         }
       }
+      this.changed = true;
+      return true;
+    } finally {
+      if (!_moved0) entry.drop();
     }
-    this.changed = true;
-    return true;
   }
 
   remove(id: EntityId): boolean {

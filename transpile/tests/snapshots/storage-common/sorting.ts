@@ -376,22 +376,29 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
           })();
           if ((_m1 as any)?.$jump === 'break') break;
           const pollResult = (_m1 as any);
-          const _m3 = pollResult.match<any>({
+          const _m4 = pollResult.match<any>({
             Ready: (v) => {
               if (v._0 != null) {
                 const item = v._0;
+                let _moved2 = false;
                 const heapItem = new HeapItem(item, this_.orderBy.spill.map((e) => e.clone()));
-                if (heap.len() < this_.k) {
-                  heap.push(heapItem);
-                } else {
-                  const _v3 = heap.peek();
-                  if (_v3 != null) {
-                    const worst = _v3;
-                    if (heapItem < worst) {
-                      dropOwned(heap.pop());
-                      heap.push(heapItem);
+                try {
+                  if (heap.len() < this_.k) {
+                    _moved2 = true;
+                    heap.push(heapItem);
+                  } else {
+                    const _v3 = heap.peek();
+                    if (_v3 != null) {
+                      const worst = _v3;
+                      if (heapItem < worst) {
+                        dropOwned(heap.pop());
+                        _moved2 = true;
+                        heap.push(heapItem);
+                      }
                     }
                   }
+                } finally {
+                  if (!_moved2) heapItem.drop();
                 }
               } else {
                 this_.inner = null;
@@ -401,7 +408,7 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
                 });
                 sortItemsByOrder(topK, this_.orderBy.spill);
                 this_.sortedPartition = [...topK];
-                const _m2 = new Poll('Ready', { _0: null });
+                const _m3 = new Poll('Ready', { _0: null });
                 return { $jump: 'return', $value: (this_.sortedPartition != null ? ((iter) => {
                   {
                     const _v4 = unsupported('`next` advances an iterator\'s cursor, and the port writes an iterator as the whole sequence with no cursor to advance');
@@ -413,14 +420,14 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
                     return new Poll('Ready', { _0: null });
                   }
                   }
-                })(this_.sortedPartition!) : _m2) };
+                })(this_.sortedPartition!) : _m3) };
               }
             },
             Pending: () => {
               return { $jump: 'return', $value: Poll.Pending }
             },
           });
-          if ((_m3 as any)?.$jump === 'return') return (_m3 as any).$value;
+          if ((_m4 as any)?.$jump === 'return') return (_m4 as any).$value;
         }
         return new Poll('Ready', { _0: null });
       } finally {
@@ -449,7 +456,7 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
       if (this_.exhausted) {
         return new Poll('Ready', { _0: null });
       }
-      const _m4 = (() => {
+      const _m5 = (() => {
         {
           const _v7 = this_.inner;
           if (!(_v7 != null)) {
@@ -459,25 +466,25 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
           return Pin.new(inner).pollNext(cx);
         }
       })();
-      if ((_m4 as any)?.$jump === 'return') return (_m4 as any).$value;
-      const pollResult = (_m4 as any);
-      const _m9 = pollResult.match<any>({
+      if ((_m5 as any)?.$jump === 'return') return (_m5 as any).$value;
+      const pollResult = (_m5 as any);
+      const _m10 = pollResult.match<any>({
         Ready: (v) => {
           if (v._0 != null) {
             const item = v._0;
-            let _moved5 = false;
+            let _moved6 = false;
             const itemKey = extractPartitionKey(item, this_.orderBy.presort);
             try {
-              _match8: {
+              _match9: {
                 if (this_.currentPartitionKey == null) {
                   {
-                    const _a6 = itemKey;
+                    const _a7 = itemKey;
                     dropOwned(this_.currentPartitionKey);
-                    _moved5 = true;
-                    this_.currentPartitionKey = _a6;
+                    _moved6 = true;
+                    this_.currentPartitionKey = _a7;
                     this_.currentPartition.push(item);
                   }
-                  break _match8;
+                  break _match9;
                 }
                 if (this_.currentPartitionKey != null) {
                   const currentKey = this_.currentPartitionKey;
@@ -485,7 +492,7 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
                     {
                       this_.currentPartition.push(item);
                     }
-                    break _match8;
+                    break _match9;
                   }
                 }
                 {
@@ -493,16 +500,16 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
                     let partition = mem.take(this_.currentPartition);
                     sortItemsByOrder(partition, this_.orderBy.spill);
                     this_.sortedPartition = partition.intoIter();
-                    const _a7 = itemKey;
+                    const _a8 = itemKey;
                     dropOwned(this_.currentPartitionKey);
-                    _moved5 = true;
-                    this_.currentPartitionKey = _a7;
+                    _moved6 = true;
+                    this_.currentPartitionKey = _a8;
                     this_.currentPartition.push(item);
                   }
                 }
               }
             } finally {
-              if (!_moved5) dropOwned(itemKey);
+              if (!_moved6) dropOwned(itemKey);
             }
           } else {
             this_.exhausted = true;
@@ -518,7 +525,7 @@ export class TopKStream<S extends Unpin & Stream> extends Struct {
           return { $jump: 'return', $value: Poll.Pending }
         },
       });
-      if ((_m9 as any)?.$jump === 'return') return (_m9 as any).$value;
+      if ((_m10 as any)?.$jump === 'return') return (_m10 as any).$value;
     }
   }
 }

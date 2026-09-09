@@ -105,49 +105,67 @@ describe('resultset unit tests', () => {
   test('test_order_by_with_tie_breaking', () => {
     const resultset = EntityResultSet.empty();
     try {
+      let _moved0 = false;
       let props1 = new HashMap();
-      props1.set('name', new Value('String', { _0: 'Alice' }));
-      const entity1 = TestEntity.new(1, props1);
       try {
-        let props2 = new HashMap();
-        props2.set('name', new Value('String', { _0: 'Alice' }));
-        const entity2 = TestEntity.new(2, props2);
+        props1.set('name', new Value('String', { _0: 'Alice' }));
+        _moved0 = true;
+        const entity1 = TestEntity.new(1, props1);
         try {
-          let props3 = new HashMap();
-          props3.set('name', new Value('String', { _0: 'Bob' }));
-          const entity3 = TestEntity.new(3, props3);
+          let _moved1 = false;
+          let props2 = new HashMap();
           try {
-            const keySpec = new KeySpec([new IndexKeyPart('name', null, new IndexDirection('Asc', {}), new ValueType('String', {}), new NullsOrder('Last', {}), null)]);
-            resultset.orderBy(keySpec);
-            let _moved0 = false;
-            let write = resultset.write();
+            props2.set('name', new Value('String', { _0: 'Alice' }));
+            _moved1 = true;
+            const entity2 = TestEntity.new(2, props2);
             try {
-              write.add(entity2.clone());
-              write.add(entity3.clone());
-              write.add(entity1.clone());
-              _moved0 = true;
-              write.drop();
-              const readGuard = resultset.read();
+              let _moved2 = false;
+              let props3 = new HashMap();
               try {
-                const entities = readGuard.iterEntities();
-                expect(entities.length).toEqual(3);
-                expect(entities[0]._0).toEqual(entity1.id);
-                expect(entities[1]._0).toEqual(entity2.id);
-                expect(entities[2]._0).toEqual(entity3.id);
+                props3.set('name', new Value('String', { _0: 'Bob' }));
+                _moved2 = true;
+                const entity3 = TestEntity.new(3, props3);
+                try {
+                  const keySpec = new KeySpec([new IndexKeyPart('name', null, new IndexDirection('Asc', {}), new ValueType('String', {}), new NullsOrder('Last', {}), null)]);
+                  resultset.orderBy(keySpec);
+                  let _moved3 = false;
+                  let write = resultset.write();
+                  try {
+                    write.add(entity2.clone());
+                    write.add(entity3.clone());
+                    write.add(entity1.clone());
+                    _moved3 = true;
+                    write.drop();
+                    const readGuard = resultset.read();
+                    try {
+                      const entities = readGuard.iterEntities();
+                      expect(entities.length).toEqual(3);
+                      expect(entities[0]._0).toEqual(entity1.id);
+                      expect(entities[1]._0).toEqual(entity2.id);
+                      expect(entities[2]._0).toEqual(entity3.id);
+                    } finally {
+                      readGuard.drop();
+                    }
+                  } finally {
+                    if (!_moved3) write.drop();
+                  }
+                } finally {
+                  entity3.drop();
+                }
               } finally {
-                readGuard.drop();
+                if (!_moved2) dropOwned(props3);
               }
             } finally {
-              if (!_moved0) write.drop();
+              entity2.drop();
             }
           } finally {
-            entity3.drop();
+            if (!_moved1) dropOwned(props2);
           }
         } finally {
-          entity2.drop();
+          entity1.drop();
         }
       } finally {
-        entity1.drop();
+        if (!_moved0) dropOwned(props1);
       }
     } finally {
       resultset.drop();
@@ -161,10 +179,16 @@ describe('resultset unit tests', () => {
       let write = resultset.write();
       try {
         for (const i of range(0, 5)) {
+          let _moved1 = false;
           let props = new HashMap();
-          props.set('value', new Value('I32', { _0: (i | 0) }));
-          const entity = TestEntity.new(i, props);
-          write.add(entity);
+          try {
+            props.set('value', new Value('I32', { _0: (i | 0) }));
+            _moved1 = true;
+            const entity = TestEntity.new(i, props);
+            write.add(entity);
+          } finally {
+            if (!_moved1) dropOwned(props);
+          }
         }
         _moved0 = true;
         write.drop();
@@ -184,40 +208,52 @@ describe('resultset unit tests', () => {
   test('test_dirty_tracking', () => {
     const resultset = EntityResultSet.empty();
     try {
+      let _moved0 = false;
       let props = new HashMap();
-      props.set('active', new Value('Bool', { _0: true }));
-      const entity1 = TestEntity.new(1, props);
       try {
-        let props_1 = new HashMap();
-        props_1.set('active', new Value('Bool', { _0: false }));
-        const entity2 = TestEntity.new(2, props_1);
+        props.set('active', new Value('Bool', { _0: true }));
+        _moved0 = true;
+        const entity1 = TestEntity.new(1, props);
         try {
-          let _moved0 = false;
-          let write = resultset.write();
+          let _moved1 = false;
+          let props_1 = new HashMap();
           try {
-            write.add(entity1.clone());
-            write.add(entity2.clone());
-            write.markAllDirty();
-            const removed = write.retainDirty((entity) => valueEquals(entity.value('active'), new Value('Bool', { _0: true })));
-            _moved0 = true;
-            write.drop();
-            expect(removed.length).toEqual(1);
-            expect(removed[0]).toEqual(entity2.id);
-            expect(resultset.len()).toEqual(1);
-            const _t1 = resultset.read();
+            props_1.set('active', new Value('Bool', { _0: false }));
+            _moved1 = true;
+            const entity2 = TestEntity.new(2, props_1);
             try {
-              expect((unsupported('`next` advances an iterator\'s cursor, and the port writes an iterator as the whole sequence with no cursor to advance') ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })())[0]).toEqual(entity1.id);
+              let _moved2 = false;
+              let write = resultset.write();
+              try {
+                write.add(entity1.clone());
+                write.add(entity2.clone());
+                write.markAllDirty();
+                const removed = write.retainDirty((entity) => valueEquals(entity.value('active'), new Value('Bool', { _0: true })));
+                _moved2 = true;
+                write.drop();
+                expect(removed.length).toEqual(1);
+                expect(removed[0]).toEqual(entity2.id);
+                expect(resultset.len()).toEqual(1);
+                const _t3 = resultset.read();
+                try {
+                  expect((unsupported('`next` advances an iterator\'s cursor, and the port writes an iterator as the whole sequence with no cursor to advance') ?? (() => { throw new Error('called `Option::unwrap()` on a `None` value'); })())[0]).toEqual(entity1.id);
+                } finally {
+                  _t3.drop();
+                }
+              } finally {
+                if (!_moved2) write.drop();
+              }
             } finally {
-              _t1.drop();
+              entity2.drop();
             }
           } finally {
-            if (!_moved0) write.drop();
+            if (!_moved1) dropOwned(props_1);
           }
         } finally {
-          entity2.drop();
+          entity1.drop();
         }
       } finally {
-        entity1.drop();
+        if (!_moved0) dropOwned(props);
       }
     } finally {
       resultset.drop();

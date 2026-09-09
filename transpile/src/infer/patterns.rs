@@ -150,6 +150,57 @@ impl TypeContext<'_> {
         }
     }
 
+    /// The type a pattern can only be matching, with an unknown for each
+    /// argument the pattern does not say.
+    ///
+    /// For: `match found { Some(entity) => .. }` says `found` is an `Option`,
+    /// which is what settles a scrutinee nothing else has typed. A pattern that
+    /// names no type — a binding, a literal, `_` — says nothing.
+    pub(super) fn pattern_shape(&self, pat: &syn::Pat) -> Option<Ty> {
+        let path = match pat {
+            syn::Pat::TupleStruct(p) => &p.path,
+            syn::Pat::Struct(p) => &p.path,
+            syn::Pat::Path(p) => &p.path,
+            syn::Pat::Paren(p) => return self.pattern_shape(&p.pat),
+            syn::Pat::Reference(p) => {
+                return self.pattern_shape(&p.pat).map(|inner| Ty::Ref {
+                    mutable: p.mutability.is_some(),
+                    inner: Box::new(inner),
+                })
+            }
+            _ => return None,
+        };
+        let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+        // Rust's prelude is what puts these four in scope without a path, and a
+        // variant with no prefix resolves nowhere else.
+        let prelude = match segments.as_slice() {
+            [one] => match one.as_str() {
+                "Some" | "None" => self.registry.system_type("std::option::Option"),
+                "Ok" | "Err" => self.registry.system_type("std::result::Result"),
+                _ => None,
+            },
+            _ => None,
+        };
+        let id = match prelude {
+            Some(id) => id,
+            None => match self.registry.lookup_variant(self.module, &segments) {
+                Some((id, _)) => id,
+                None => {
+                    match self.registry.lookup(self.module, crate::registry::Ns::Type, &segments) {
+                        Ok(Some(crate::registry::Def::Type(id))) => id,
+                        _ => return None,
+                    }
+                }
+            },
+        };
+        let params = self.registry.def(id)?.type_params.len();
+        let at = syn::spanned::Spanned::span(pat);
+        Some(Ty::Named {
+            id,
+            args: (0..params).map(|index| self.var_at(at, index)).collect(),
+        })
+    }
+
     /// What the variant or struct a pattern names carries, with the matched
     /// value's own type arguments substituted in.
     pub fn payload_of(&self, path: &syn::Path, ty: Option<&Ty>) -> Option<Vec<(String, Ty)>> {

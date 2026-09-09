@@ -1,13 +1,19 @@
 // MIRRORS: ankurah/storage/common/src/predicate.rs
-import { Struct } from '@ankurah/base';
+import { Struct, dropOwned } from '@ankurah/base';
 import { Predicate } from '@ankurah/ankql';
 
 export class ConjunctFinder extends Struct {
 
   static find(predicate: Predicate): Predicate[] {
+    let _moved0 = false;
     let conjuncts = [];
-    ConjunctFinder.extractConjuncts(predicate, conjuncts);
-    return conjuncts;
+    try {
+      ConjunctFinder.extractConjuncts(predicate, conjuncts);
+      _moved0 = true;
+      return conjuncts;
+    } finally {
+      if (!_moved0) dropOwned(conjuncts);
+    }
   }
 
   static extractConjuncts(predicate: Predicate, conjuncts: Predicate[]): void {

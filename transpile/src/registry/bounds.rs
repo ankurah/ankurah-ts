@@ -5,10 +5,39 @@
 //! other two jobs, each in its own file.
 
 use super::impls::{head_of, Bound};
-use super::method::{open_params, Holds, Obligation, Undecided, MAX_BOUND_DEPTH, SIZED_PATH};
+use super::method::{open_params, Holds, MAX_BOUND_DEPTH, SIZED_PATH};
 use super::Probe;
 use crate::ty::subst::Subst;
 use crate::ty::{TraitRef, Ty, TypeId};
+/// A bound the engine recorded rather than decided.
+///
+/// `impl<F: Fn(T)> IntoBroadcastListener<T> for F` applies only to a closure,
+/// and until closures are typed (spec 4.5) the engine cannot say whether a given
+/// `F` is one. Assuming it holds would pick an impl that may be wrong; assuming
+/// it fails would lose the only impl there is. So the impl stays a candidate and
+/// the undecided bound travels with the answer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Obligation {
+    pub subject: Ty,
+    pub bound: TraitRef,
+    pub reason: Undecided,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Undecided {
+    /// The trait has no declaration in reach: a marker such as `Send`, or a std
+    /// trait before the stub declarations land (spec 4.4, step 3).
+    NoDeclaration,
+    /// The subject is still a type parameter, so there is no type to look for an
+    /// impl of.
+    OpenSubject,
+    /// The subject is an unknown the body has not settled, so which impl proves
+    /// the bound is decided by a constraint that has not run yet.
+    Unsettled,
+    /// Deciding it would have recursed past the depth limit.
+    DepthLimit,
+}
+
 impl Probe<'_> {
     // ── Bounds ─────────────────────────────────────────────────────────
 
@@ -78,6 +107,13 @@ impl Probe<'_> {
             {
                 return Holds::Yes;
             }
+        }
+        // An unknown the solver has not bound is a type the body has not
+        // decided yet, not one nothing can decide: a later round asks this
+        // bound again with the answer. Refusing the impl here loses every
+        // method on a constructor whose arguments below it settle.
+        if matches!(subject, Ty::Var(_)) {
+            return Holds::Undecided(Undecided::Unsettled);
         }
         // A subject that is *itself* still open is not a type an impl can be
         // found for. One that merely holds an open argument can be: `impl<K, V>

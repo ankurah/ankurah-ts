@@ -14,6 +14,7 @@
 pub(crate) mod declared;
 pub(crate) mod signatures;
 
+pub use super::bounds::{Obligation, Undecided};
 use super::impls::{head_of, Bound, Head, ImplId};
 use super::{ModuleId, TypeRegistry};
 use crate::ty::subst::Subst;
@@ -134,32 +135,6 @@ impl Callee {
             Callee::TraitObject(..) => None,
         }
     }
-}
-
-/// A bound the engine recorded rather than decided.
-///
-/// `impl<F: Fn(T)> IntoBroadcastListener<T> for F` applies only to a closure,
-/// and until closures are typed (spec 4.5) the engine cannot say whether a given
-/// `F` is one. Assuming it holds would pick an impl that may be wrong; assuming
-/// it fails would lose the only impl there is. So the impl stays a candidate and
-/// the undecided bound travels with the answer.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Obligation {
-    pub subject: Ty,
-    pub bound: TraitRef,
-    pub reason: Undecided,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Undecided {
-    /// The trait has no declaration in reach: a marker such as `Send`, or a std
-    /// trait before the stub declarations land (spec 4.4, step 3).
-    NoDeclaration,
-    /// The subject is still a type parameter, so there is no type to look for an
-    /// impl of.
-    OpenSubject,
-    /// Deciding it would have recursed past the depth limit.
-    DepthLimit,
 }
 
 /// Everything a resolved call tells emission.

@@ -598,3 +598,25 @@ fn a_variant_written_as_a_qualified_path_resolves_through_its_enum() {
         body
     );
 }
+
+#[test]
+fn a_pattern_says_what_the_value_it_matches_is() {
+    // `match found { Some(_) => .. }` says `found` is an `Option`, which is
+    // what settles a scrutinee nothing else has typed.
+    let c = Fixture::build(&[("lib.rs", "pub struct S { pub slot: Option<u32> }")]);
+    let mut cx = c.context("lib.rs", None);
+    cx.push_fn(vec![]);
+
+    let pat: syn::Pat = syn::parse::Parser::parse_str(syn::Pat::parse_single, "Some(inner)")
+        .expect("parses as a pattern");
+    let shape = cx.pattern_shape(&pat).expect("a variant names its enum");
+    let Ty::Named { id, args } = &shape else { panic!("a variant names a type") };
+    assert_eq!(*id, c.system_id(OPTION));
+    assert_eq!(args.len(), 1, "the argument the pattern does not say is an unknown");
+    assert!(matches!(args[0], Ty::Var(_)));
+
+    // A binding names no type, so it says nothing about what it matches.
+    let bare: syn::Pat = syn::parse::Parser::parse_str(syn::Pat::parse_single, "other")
+        .expect("parses as a pattern");
+    assert_eq!(cx.pattern_shape(&bare), None);
+}

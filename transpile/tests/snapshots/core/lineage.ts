@@ -188,10 +188,16 @@ class Comparison<G extends GetEvents> extends Struct {
       const headOverlap = initialHeadsEqual;
       const _b1 = other_1.size;
       const _b2 = other_1.clone();
+      let _moved4 = false;
       const _b3 = new HashMap<Id, State<Id>>();
-      const _b4 = new HashSet<Id>();
-      _moved0 = true;
-      return new Comparison(getter, originalOtherEvents, other_1, budget, subjectFrontier, _b2, _b3, _b4, _b1, headOverlap, initialHeadsEqual, false, subjectEventAccumulator);
+      try {
+        const _b5 = new HashSet<Id>();
+        _moved4 = true;
+        _moved0 = true;
+        return new Comparison(getter, originalOtherEvents, other_1, budget, subjectFrontier, _b2, _b3, _b5, _b1, headOverlap, initialHeadsEqual, false, subjectEventAccumulator);
+      } finally {
+        if (!_moved4) dropOwned(_b3);
+      }
     } finally {
       if (!_moved0) dropOwned(subjectEventAccumulator);
     }

@@ -39,7 +39,7 @@ export class SystemManager<SE extends StorageEngine, PA extends PolicyAgent> ext
               const _b8 = Notify.new();
               try {
                 let _moved11 = false;
-                const _b10 = new RwLock(new HashMap());
+                const _b10 = new RwLock(new HashMap<CollectionId, Entity>());
                 try {
                   let _moved13 = false;
                   const _b12 = new RwLock(false);

@@ -21,7 +21,22 @@ export class WatcherSet extends Struct {
   }
 
   static new(): WatcherSet {
-    return new WatcherSet(new HashMap<[CollectionId, PropertyPath], ComparisonIndex<[ReactorSubscriptionId, QueryId]>>(), new HashMap<CollectionId, HashSet<[ReactorSubscriptionId, QueryId]>>(), new HashMap<EntityId, HashSet<EntityWatcherId>>());
+    let _moved1 = false;
+    const _b0 = new HashMap<[CollectionId, PropertyPath], ComparisonIndex<[ReactorSubscriptionId, QueryId]>>();
+    try {
+      let _moved3 = false;
+      const _b2 = new HashMap<CollectionId, HashSet<[ReactorSubscriptionId, QueryId]>>();
+      try {
+        const _b4 = new HashMap<EntityId, HashSet<EntityWatcherId>>();
+        _moved1 = true;
+        _moved3 = true;
+        return new WatcherSet(_b0, _b2, _b4);
+      } finally {
+        if (!_moved3) dropOwned(_b2);
+      }
+    } finally {
+      if (!_moved1) dropOwned(_b0);
+    }
   }
 
   accumulateInterestedWatchers<E extends AbstractEntity, C>(entity: E, offset: number, changesArc: Arc<C[]>, candidatesBySub: HashMap<ReactorSubscriptionId, CandidateChanges<C>>): void {
