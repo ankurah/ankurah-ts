@@ -1,6 +1,6 @@
-// Runs the emitted option_payload against the real runtime. Against the parent
-// engine (c2e2b2d) every one of these bodies is a hole: `readLoosely` still is,
-// and the rest throw `UnsupportedShape` where Rust answers.
+// Runs the emitted option_payload against the real runtime.
+//
+// Each body answers what Rust answers rather than throwing on the shape.
 
 import { expect, test } from 'bun:test';
 import { OwnershipFatal, clearFatalLatch } from '@ankurah/base';

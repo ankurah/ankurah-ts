@@ -1,7 +1,6 @@
-// Runs the emitted taken_by_value against the real runtime. Against the parent
-// engine (c2e2b2d) every closure here leaks what the call handed it, and the
-// comparison arms leak both operands: a by-value parameter and an arm's binding
-// were owned by nobody.
+// Runs the emitted taken_by_value against the real runtime.
+//
+// A by-value parameter and an arm's binding are owned by the body they enter.
 
 import { expect, test } from 'bun:test';
 import { OwnershipFatal, clearFatalLatch } from '@ankurah/base';

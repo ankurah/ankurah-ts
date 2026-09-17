@@ -1,8 +1,7 @@
-// Runs the emitted callback_mode against the real runtime. Against the parent
-// engine (c2e2b2d) the borrowed callbacks are released by the terminal, so
-// `findBorrowing`'s own `p.drop()` is a second drop and `readBorrowing`'s
-// second `find` calls a closure whose captures are gone; and `throughByRef`
-// emits `it.byRef()`, a method no array declares.
+// Runs the emitted callback_mode against the real runtime.
+//
+// A BORROWED callback belongs to the caller, so the terminal that ran it
+// releases nothing and a second pass may call it again.
 
 import { expect, test } from 'bun:test';
 import { OwnershipFatal, clearFatalLatch } from '@ankurah/base';

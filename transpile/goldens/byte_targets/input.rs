@@ -13,7 +13,7 @@
 //! so one function here builds its answer both ways and the two must agree.
 
 /// The `encode_value_component` shape: complement every byte for a descending
-/// index component. The parent engine (b05f82c) answered `number[]` here.
+/// index component, which answers a `Uint8Array` and not a `number[]`.
 pub fn descending(bytes: Vec<u8>) -> Vec<u8> {
     bytes.into_iter().map(|b| 0xFFu8.wrapping_sub(b)).collect()
 }

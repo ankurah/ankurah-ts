@@ -5,9 +5,11 @@ pub mod format_emit;
 pub mod format_spec;
 pub mod items;
 pub mod logging;
+mod operands;
 mod select;
 
 use crate::body::BodyTranslator;
+pub use operands::macro_argument_exprs;
 pub use select::select_futures;
 use select::translate_select;
 
@@ -205,14 +207,9 @@ fn formatted(
         .unwrap_or_else(|| format_emit::quoted(&written.fmt.value()))
 }
 
-/// `write!(f, "..", ..)` and `writeln!`: the formatter the first argument names
-/// is what the port's `toString` returns, so it is dropped and the text stands.
-fn written_text(
-    name: &str,
-    tokens: &TokenStream,
-    t: &BodyTranslator,
-    at: proc_macro2::Span,
-) -> String {
+/// The format call behind a `write!`'s formatter, or nothing where the tokens
+/// are not a formatter followed by one.
+fn write_arguments(tokens: &TokenStream) -> Option<TokenStream> {
     struct Rest {
         rest: TokenStream,
     }
@@ -223,7 +220,18 @@ fn written_text(
             Ok(Rest { rest: input.parse()? })
         }
     }
-    let Ok(Rest { rest }) = syn::parse2::<Rest>(tokens.clone()) else {
+    syn::parse2::<Rest>(tokens.clone()).ok().map(|r| r.rest)
+}
+
+/// `write!(f, "..", ..)` and `writeln!`: the formatter the first argument names
+/// is what the port's `toString` returns, so it is dropped and the text stands.
+fn written_text(
+    name: &str,
+    tokens: &TokenStream,
+    t: &BodyTranslator,
+    at: proc_macro2::Span,
+) -> String {
+    let Some(rest) = write_arguments(tokens) else {
         t.fallback(
             at,
             format!(
@@ -313,6 +321,20 @@ fn operand(t: &BodyTranslator, expr: &Expr, want: Option<&crate::ty::Ty>) -> Str
     })
 }
 
+/// `vec![v; n]` read as the repeat expression it is.
+///
+/// A `vec!`'s tokens carry no brackets of their own, and `[v; n]` is the shape
+/// syn parses, so the brackets are put back before it is read.
+fn repeat_form(tokens: &TokenStream) -> Option<syn::ExprRepeat> {
+    syn::parse2::<syn::ExprRepeat>(quote::quote!([#tokens])).ok()
+}
+
+/// The count a `vec![v; n]` repeats its value by, where it is written in that
+/// form.
+pub fn vec_repeat_count(mac: &syn::Macro) -> Option<Expr> {
+    repeat_form(&mac.tokens).map(|repeat| *repeat.len)
+}
+
 /// The elements a `vec![..]` holds, for the engine to type them.
 ///
 /// `vec![a; n]` repeats one element, and `vec![a, b]` lists them; either way
@@ -320,33 +342,10 @@ fn operand(t: &BodyTranslator, expr: &Expr, want: Option<&crate::ty::Ty>) -> Str
 /// that do not parse as expressions hand back nothing, and the caller says so
 /// rather than guessing.
 pub fn vec_macro_elements(mac: &syn::Macro) -> Vec<Expr> {
-    if let Ok(repeat) = syn::parse2::<syn::ExprRepeat>(mac.tokens.clone()) {
-        return vec![(*repeat.expr).clone()];
+    if let Some(repeat) = repeat_form(&mac.tokens) {
+        return vec![*repeat.expr];
     }
     parse_exprs_from_tokens(&mac.tokens).unwrap_or_default()
-}
-
-/// The argument expressions of a macro this port supports, for the walk that
-/// types a body.
-///
-/// The port expands no macro, but the emitter parses these tokens and types
-/// what it finds there. A walk that does not see them types the body less
-/// than the emitter does, and a local a macro argument decides stays unknown.
-pub fn macro_argument_exprs(mac: &syn::Macro) -> Vec<Expr> {
-    let name = mac
-        .path
-        .segments
-        .last()
-        .map(|s| s.ident.to_string())
-        .unwrap_or_default();
-    match name.as_str() {
-        "select" => select_futures(&mac.tokens),
-        "vec" => vec_macro_elements(mac),
-        "format" | "println" | "eprintln" | "write" | "writeln" | "panic" | "unreachable"
-        | "assert" | "assert_eq" | "assert_ne" | "debug_assert" | "debug_assert_eq"
-        | "debug_assert_ne" | "matches" => parse_exprs_from_tokens(&mac.tokens).unwrap_or_default(),
-        _ => Vec::new(),
-    }
 }
 
 fn parse_exprs_from_tokens(tokens: &TokenStream) -> Result<Vec<Expr>, syn::Error> {

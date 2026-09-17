@@ -1,8 +1,7 @@
-// Runs the emitted owned_terminals against the real runtime. F1: against the
-// parent engine (b05f82c) every consuming terminal here is wrong — `position`
-// raises `OwnershipFatal` because the sequence is released a second time,
-// `find` hands back an element the same `finally` has already released, and
-// `max_by_key`, `min_by` and `reduce` leak every element they did not answer.
+// Runs the emitted owned_terminals against the real runtime.
+//
+// A consuming terminal takes the sequence's elements: what it answers with is
+// the caller's, and what it did not answer is released once.
 
 import { expect, test } from 'bun:test';
 import { OwnershipFatal, clearFatalLatch } from '@ankurah/base';

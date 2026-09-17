@@ -1,8 +1,7 @@
-// Runs the emitted flag_prelude against the real runtime. Against the parent
-// engine (c2e2b2d) every function here leaks its Token on the throwing path —
-// the flag said the callee had taken it and the callee was never reached — and
-// `insideABranch` is worse than that: it wrote no flag at all, so the callee
-// took the token and the block released it a second time.
+// Runs the emitted flag_prelude against the real runtime.
+//
+// Every function is called down its THROWING path, where the flag decides
+// whether the callee took the value or the block still owes its release.
 
 import { expect, test } from 'bun:test';
 import { OwnershipFatal, clearFatalLatch } from '@ankurah/base';

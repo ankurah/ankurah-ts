@@ -1,8 +1,7 @@
 // Runs the emitted a_throw_above_a_move against the real runtime.
 //
-// Every function here is called down its THROWING path, which is the path the
-// parent's engine leaks on: the move below the throw was "on every path", so
-// the block wrote no release for it at all.
+// Every function is called down its THROWING path, where a move BELOW the throw
+// has not happened and the block still owes the release.
 
 import { expect, test } from 'bun:test';
 import {
@@ -28,7 +27,7 @@ test('a throw above one move releases it', () => {
 
 test('a throwing element before the move releases what the frame still held', () => {
   // The element that can throw is written FIRST, so its early return leaves the
-  // frame holding both tokens: at `ccedae7` neither was released.
+  // frame holding both tokens, and both are released.
   const left = aThrowingElementBeforeTheMove(new Token(7n), new Token(8n), false);
   expect(left.isErr()).toBe(true);
   // The driver owns what the call handed back, and the golden run checks that

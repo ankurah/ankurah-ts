@@ -50,6 +50,7 @@ impl BodyTranslator<'_> {
         }
         let solved = self.bound_unknowns();
         let late = self.scratch_bindings();
+        let already = self.unsolved_sites().len();
         let owned = self.claim_params(block, params);
         let body = self.translate_block_stmts(block);
         // The table this walk read is the table the solve left. A binding made
@@ -57,11 +58,9 @@ impl BodyTranslator<'_> {
         // ones above, which is one local with two answers. What the walk WOULD
         // have bound counts too: it asks against a scratch copy, so the table's
         // own count cannot move and proves nothing on its own.
-        assert_eq!(
-            (self.bound_unknowns(), self.scratch_bindings()),
-            (solved, late),
-            "writing this body bound an unknown the solve had not"
-        );
+        if (self.bound_unknowns(), self.scratch_bindings()) != (solved, late) {
+            self.report_constraints_the_solve_missed(block, already);
+        }
         self.pop_scope();
         for owned in &owned {
             if let Some(source) = &owned.source {
@@ -88,6 +87,46 @@ impl BodyTranslator<'_> {
         match &self.types {
             Some(tc) => tc.borrow().scratch_bindings(),
             None => 0,
+        }
+    }
+
+    fn unsolved_sites(&self) -> Vec<proc_macro2::Span> {
+        match &self.types {
+            Some(tc) => tc.borrow().unsolved_sites(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Report each constraint the walk that writes this body met and the solve
+    /// never did.
+    ///
+    /// The two walks read one body, so this is the engine's own gap: the
+    /// writing walk parses an expression the typing walk did not reach. It is
+    /// a diagnostic at the expression, because the crate's other bodies are
+    /// still worth emitting and the type below the gap is the one the untyped
+    /// path writes.
+    fn report_constraints_the_solve_missed(&self, block: &syn::Block, already: usize) {
+        let sites = self.unsolved_sites();
+        let missed = &sites[already.min(sites.len())..];
+        let mut said: Vec<(usize, usize)> = Vec::new();
+        for at in missed {
+            let start = at.start();
+            if said.contains(&(start.line, start.column)) {
+                continue;
+            }
+            said.push((start.line, start.column));
+            self.fallback(
+                *at,
+                "this expression says what a type in this body is, and the walk that types the \
+                 body did not read it — so what it says arrives only below this line",
+            );
+        }
+        if said.is_empty() {
+            self.fallback(
+                syn::spanned::Spanned::span(block),
+                "something in this body says what a type here is, and the walk that types the \
+                 body did not read it",
+            );
         }
     }
 

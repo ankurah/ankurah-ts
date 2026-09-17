@@ -6,6 +6,7 @@
 //! don't need entries here — they pass through as-is.
 
 mod arc;
+mod atomic; // std::sync::atomic::* → the plain value it holds
 pub(crate) mod array; // Vec<T> → T[]
 mod bytes; // Vec<u8>/[u8] → Uint8Array
 pub(crate) mod conversion; // into/from/as_ref — the conversions the runtime performs
@@ -13,7 +14,7 @@ pub(crate) mod iterator; // Iterator trait methods on arrays
 pub(crate) mod js_value; // serde_json::Value / JsValue → unknown
 pub(crate) mod map; // HashMap<K,V>/BTreeMap<K,V> → Map<K,V>
 pub mod nullable; // Option<T> → T | null
-mod number; // AtomicUsize/AtomicU32 → number
+mod number; // a Rust primitive's own methods
 pub(crate) mod ordering; // std::cmp::Ordering → -1 | 0 | 1
 mod set; // HashSet<T>/BTreeSet<T> → Set<T>
 mod string; // String/&str → string // Arc<T>/Weak<T> — reference-counted pointer
@@ -38,7 +39,7 @@ pub fn translate_static_call(func: &str, args: &[String]) -> Option<String> {
         .or_else(|| string::translate_static(func, args))
         .or_else(|| map::translate_static(func, args))
         .or_else(|| set::translate_static(func, args))
-        .or_else(|| number::translate_static(func, args))
+        .or_else(|| atomic::translate_static(func, args))
 }
 
 /// Result of a method translation
@@ -73,11 +74,6 @@ pub(crate) const ATOMIC_WRITES: [&str; 13] = [
     "fetch_update",
 ];
 
-/// Does this call write a place the runtime hands out only as a VALUE?
-///
-/// An atomic is a number or a boolean here, and an accessor that reaches one
-/// inside a holder hands out a copy: the write lands on the copy and is lost.
-/// Until the runtime has a cell a holder can carry, such a call is a hole.
 /// Is this one of the atomics the port writes as the value it holds?
 ///
 /// Such a value is a PLACE a shared reference writes, so the binding that holds
@@ -87,6 +83,11 @@ pub(crate) fn is_an_atomic(reg: &TypeRegistry, ty: &Ty) -> bool {
     reg.name_of(id).starts_with("Atomic")
 }
 
+/// Does this call write a place the runtime hands out only as a VALUE?
+///
+/// An atomic is a number or a boolean here, and an accessor that reaches one
+/// inside a holder hands out a copy: the write lands on the copy and is lost.
+/// Until the runtime has a cell a holder can carry, such a call is a hole.
 pub(crate) fn writes_through_the_holder(reg: &TypeRegistry, method: &str, target: &Ty) -> bool {
     ATOMIC_WRITES.contains(&method)
         && crate::is_value_spelling(&crate::name_map::map_ty(reg, target))
@@ -259,6 +260,19 @@ pub fn translate_method_using(
                 // double.
                 other => atomic_width(reg, other),
             };
+            // An atomic's own methods first: `load` and `store` on a plain
+            // number are not those methods, and reading them as such wrote an
+            // assignment where a call stood.
+            if is_an_atomic(reg, receiver_ty.peel_refs()) {
+                let holds = match js_shape(reg, receiver_ty) {
+                    JsShape::Boolean => atomic::Holds::Boolean,
+                    _ => atomic::Holds::Integer(width),
+                };
+                match atomic::translate(receiver, rust_method, args, holds) {
+                    MethodTranslation::Passthrough => {}
+                    translated => return translated,
+                }
+            }
             number::translate(receiver, rust_method, args, width)
         }
         // `Box<T>` and `&T` are the value they hold.

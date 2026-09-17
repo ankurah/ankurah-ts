@@ -1,8 +1,7 @@
-// Runs the emitted default_and_expectation against the real runtime. Against
-// the parent engine (c2e2b2d) `toBytes` answers a `number[]` from one arm and a
-// `Uint8Array` from the other; every `unwrapOrDefault` is a `TypeError`,
-// because nothing declares one; and `serde_json.Value` is a name
-// `@ankurah/base` does not export at all.
+// Runs the emitted default_and_expectation against the real runtime.
+//
+// A default and the position around it decide one type, so both arms of a
+// `match` answer the same runtime shape.
 
 import { expect, test } from 'bun:test';
 import { Lit, bytesOrEmpty, countOrZero, jsonBytes, jsonNull, jsonOf, textOrEmpty, toBytes } from './input.ts';

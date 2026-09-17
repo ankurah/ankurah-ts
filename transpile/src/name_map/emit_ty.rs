@@ -68,7 +68,7 @@ pub fn map_ty(reg: &TypeRegistry, ty: &Ty) -> String {
     // A `dyn Fn` holds a plain arrow or an `OwnedClosure` — the two shapes
     // `Invocable` covers and `invoke` tells apart — so an arrow alone is a type
     // half the values at that position do not have.
-    if let (true, JsShape::Fn { params, ret }) = (holds_a_dyn_callable(reg, ty), js_shape(reg, ty)) {
+    if let (true, JsShape::Fn { params, ret }) = (holds_a_dyn_callable(reg, ty, &[]), js_shape(reg, ty)) {
         let params: Vec<String> = params.iter().map(|ty| map_ty(reg, ty)).collect();
         return format!("Invocable<[{}], {}>", params.join(", "), map_ty(reg, &ret));
     }
@@ -188,16 +188,27 @@ fn named(reg: &TypeRegistry, ty: &Ty) -> String {
     }
 }
 
-/// Is this a `dyn Fn`, however it is held?
+/// Is the callable inside this type one the port writes as an `Invocable`?
 ///
 /// The port writes `Box<dyn Fn()>`, `Arc<dyn Fn()>` and a bare `dyn Fn()` as the
-/// callable itself, and any of them may hold an `OwnedClosure`.
-pub(crate) fn holds_a_dyn_callable(reg: &TypeRegistry, ty: &Ty) -> bool {
+/// callable itself, and any of them may hold an `OwnedClosure`. `Arc<F>` where
+/// the signature wrote `F: Fn(..)` is the same value one spelling further out,
+/// so the bounds in scope answer for a type parameter.
+pub(crate) fn holds_a_dyn_callable(
+    reg: &TypeRegistry,
+    ty: &Ty,
+    param_bounds: &[(String, crate::ty::TraitRef)],
+) -> bool {
     match ty.peel_refs() {
         Ty::Dyn { traits } => traits
             .iter()
             .any(|t| matches!(reg.name_of(t.id).as_str(), "Fn" | "FnMut" | "FnOnce")),
-        Ty::Named { args, .. } => args.first().is_some_and(|inner| holds_a_dyn_callable(reg, inner)),
+        Ty::Param(name) => param_bounds.iter().any(|(subject, bound)| {
+            subject == name && matches!(reg.name_of(bound.id).as_str(), "Fn" | "FnMut" | "FnOnce")
+        }),
+        Ty::Named { args, .. } => args
+            .first()
+            .is_some_and(|inner| holds_a_dyn_callable(reg, inner, param_bounds)),
         _ => false,
     }
 }

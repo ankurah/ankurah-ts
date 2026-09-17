@@ -59,7 +59,7 @@ which is what makes the silence worth something — not what makes it certain.
 
 ## These five seeds are captured output, not yet vetted
 
-They were produced by running `batch` at commit f602831 and saving what came out.
+They were produced by running `batch` and saving what came out.
 Daniel has not read them line by line yet, so treat them as "what the transpiler
 does today", not as "what is right". Until he vets them, a diff against one of
 these files means *something moved*, not *something broke*.

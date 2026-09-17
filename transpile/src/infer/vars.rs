@@ -10,7 +10,7 @@ use syn::spanned::Spanned;
 use super::context::TypeContext;
 use crate::diag::Diag;
 use crate::registry::{resolve_type, TypeEnv};
-use crate::ty::{Contradiction, Mismatch, Ty, VarKind, UNDECIDED_RESULT};
+use crate::ty::{Contradiction, Mismatch, Site, Ty, VarKind, UNDECIDED_RESULT};
 
 impl TypeContext<'_> {
     /// The type with every unknown the solver has settled replaced by what it
@@ -32,6 +32,9 @@ impl TypeContext<'_> {
             let answer = scratch.unify(a, b);
             let made = scratch.bindings_made() - before;
             self.vars.borrow_mut().note_scratch_bindings(made);
+            if made > 0 {
+                self.note_unsolved_site();
+            }
             return answer;
         }
         self.vars.borrow_mut().unify(a, b)
@@ -164,18 +167,28 @@ impl TypeContext<'_> {
     /// parameter is what that parameter holds. A `&` the declared side has over
     /// a value carrying none is the borrow the engine reads that value through.
     pub(super) fn constrain_here(&self, span: proc_macro2::Span, want: &Ty, actual: &Ty) {
-        self.constrain_at(span, want, actual, true)
+        self.constrain_at(span, want, actual, Site::Coercion)
     }
 
-    /// The same, saying whether Rust would coerce here. It coerces where a
-    /// value MEETS a declared type and nowhere inside one, so the element
-    /// recursion below asks with `false`.
+    /// Constrain two types the site only COMPARES.
+    ///
+    /// `a == b` hands nothing over and releases nothing, and Rust compares
+    /// through a borrow either side carries, so a reference on one side is no
+    /// evidence — while what the two hold is still one type, which is what
+    /// gives an unsuffixed literal its width.
+    pub(super) fn constrain_compared(&self, span: proc_macro2::Span, left: &Ty, right: &Ty) {
+        self.constrain_at(span, left, right, Site::Comparison)
+    }
+
+    /// The same, saying what the site does with the two types. The element
+    /// recursion below asks with `Site::Nested`, because Rust coerces where a
+    /// value MEETS a declared type and nowhere inside one.
     fn constrain_at(
         &self,
         span: proc_macro2::Span,
         want: &Ty,
         actual: &Ty,
-        at_a_coercion_site: bool,
+        site: Site,
     ) {
         // ONE declared `&` over a value carrying none is the borrow the engine
         // reads that value through. The VALUE keeps every `&` it carries: a
@@ -202,11 +215,17 @@ impl TypeContext<'_> {
             let touched = self.vars.borrow().touched();
             // `&Vec<T>` stands where `&[T]` is declared: Rust derefs one into
             // the other and the port writes both as one array, so what the two
-            // say about each other is their ELEMENT.
-            if let (Some(a), Some(b)) =
-                (self.sequence_element(through_the_borrow), self.sequence_element(actual))
-            {
-                self.constrain_at(span, &a, &b, false);
+            // say about each other is their ELEMENT. A borrow the target does
+            // not declare is not a difference the element can settle, so it is
+            // read first.
+            let borrows_meet =
+                site != Site::Coercion || self.borrows_meet(&self.probe(), want, actual);
+            if let (true, Some(a), Some(b)) = (
+                borrows_meet,
+                self.sequence_element(through_the_borrow),
+                self.sequence_element(actual),
+            ) {
+                self.constrain_at(span, &a, &b, Site::Nested);
                 return;
             }
             // Only the solve reports. The walk that WRITES a body types
@@ -223,7 +242,7 @@ impl TypeContext<'_> {
                     &self.probe(),
                     &self.solved(want),
                     &self.solved(actual),
-                    at_a_coercion_site,
+                    site,
                 )
             {
                 return;
@@ -244,7 +263,7 @@ impl TypeContext<'_> {
                 found: actual.clone(),
                 mismatch,
                 touched,
-                coerces: at_a_coercion_site,
+                site,
             });
         }
     }
@@ -272,7 +291,7 @@ impl TypeContext<'_> {
                 continue;
             }
             if !matches!(found.mismatch, Mismatch::Kind { .. })
-                && !self.disagrees(&self.probe(), &want, &actual, found.coerces)
+                && !self.disagrees(&self.probe(), &want, &actual, found.site)
             {
                 continue;
             }
@@ -384,6 +403,20 @@ impl TypeContext<'_> {
             return Some(Ty::Var(vars.kinded_at_site(at.line, at.column, 0, kind)));
         }
         vars.site(at.line, at.column, 0).map(Ty::Var)
+    }
+
+    /// What the solve settled the unsuffixed literal written at this site to.
+    ///
+    /// The width a literal is EMITTED at has to be the one the arithmetic
+    /// helpers are told, or `let x = 3; take_u64(x); x + 1` writes a JavaScript
+    /// number into `checkedAdd(x, 1n, 'u64')`, which refuses to mix the two.
+    pub fn settled_literal(&self, span: proc_macro2::Span) -> Option<Ty> {
+        let at = span.start();
+        let id = self.vars.borrow().site(at.line, at.column, 0)?;
+        match self.solved(&Ty::Var(id)) {
+            Ty::Var(_) => None,
+            settled => Some(settled),
+        }
     }
 
     /// What an argument is, with the reference the expression itself writes: a

@@ -1,7 +1,7 @@
-// Runs the emitted owned_adaptors against the real runtime. Against the parent
-// engine (c2e2b2d) every eager adaptor here forgets what it discarded, the
-// reading key fold builds a key per element and releases none of them, and
-// `next` on a fresh receiver is a hole.
+// Runs the emitted owned_adaptors against the real runtime.
+//
+// An eager adaptor releases what it discarded, and a fold releases every key it
+// built along the way.
 
 import { expect, test } from 'bun:test';
 import { OwnershipFatal } from '@ankurah/base';

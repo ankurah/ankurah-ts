@@ -48,63 +48,63 @@ describe('collation unit tests', () => {
   test('test_range_bounds', () => {
     const n = 42n;
     let _moved1 = false;
-    const _b0 = new RangeBound('Included', { _0: 40 });
+    const _b0 = new RangeBound('Included', { _0: 40n });
     try {
-      const _b2 = new RangeBound('Included', { _0: 45 });
+      const _b2 = new RangeBound('Included', { _0: 45n });
       _moved1 = true;
       if (!(I64_isInRange(n, _b0, _b2))) throw new Error('assertion failed');
     } finally {
       if (!_moved1) dropOwned(_b0);
     }
     let _moved4 = false;
-    const _b3 = new RangeBound('Included', { _0: 42 });
+    const _b3 = new RangeBound('Included', { _0: 42n });
     try {
-      const _b5 = new RangeBound('Included', { _0: 45 });
+      const _b5 = new RangeBound('Included', { _0: 45n });
       _moved4 = true;
       if (!(I64_isInRange(n, _b3, _b5))) throw new Error('assertion failed');
     } finally {
       if (!_moved4) dropOwned(_b3);
     }
     let _moved7 = false;
-    const _b6 = new RangeBound('Included', { _0: 40 });
+    const _b6 = new RangeBound('Included', { _0: 40n });
     try {
-      const _b8 = new RangeBound('Included', { _0: 42 });
+      const _b8 = new RangeBound('Included', { _0: 42n });
       _moved7 = true;
       if (!(I64_isInRange(n, _b6, _b8))) throw new Error('assertion failed');
     } finally {
       if (!_moved7) dropOwned(_b6);
     }
     let _moved10 = false;
-    const _b9 = new RangeBound('Excluded', { _0: 40 });
+    const _b9 = new RangeBound('Excluded', { _0: 40n });
     try {
-      const _b11 = new RangeBound('Excluded', { _0: 43 });
+      const _b11 = new RangeBound('Excluded', { _0: 43n });
       _moved10 = true;
       if (!(I64_isInRange(n, _b9, _b11))) throw new Error('assertion failed');
     } finally {
       if (!_moved10) dropOwned(_b9);
     }
     let _moved13 = false;
-    const _b12 = new RangeBound('Excluded', { _0: 42 });
+    const _b12 = new RangeBound('Excluded', { _0: 42n });
     try {
-      const _b14 = new RangeBound('Excluded', { _0: 43 });
+      const _b14 = new RangeBound('Excluded', { _0: 43n });
       _moved13 = true;
       if (!(!I64_isInRange(n, _b12, _b14))) throw new Error('assertion failed');
     } finally {
       if (!_moved13) dropOwned(_b12);
     }
     let _moved16 = false;
-    const _b15 = new RangeBound('Included', { _0: 42 });
+    const _b15 = new RangeBound('Included', { _0: 42n });
     try {
-      const _b17 = new RangeBound('Excluded', { _0: 43 });
+      const _b17 = new RangeBound('Excluded', { _0: 43n });
       _moved16 = true;
       if (!(I64_isInRange(n, _b15, _b17))) throw new Error('assertion failed');
     } finally {
       if (!_moved16) dropOwned(_b15);
     }
     let _moved19 = false;
-    const _b18 = new RangeBound('Excluded', { _0: 41 });
+    const _b18 = new RangeBound('Excluded', { _0: 41n });
     try {
-      const _b20 = new RangeBound('Excluded', { _0: 42 });
+      const _b20 = new RangeBound('Excluded', { _0: 42n });
       _moved19 = true;
       if (!(!I64_isInRange(n, _b18, _b20))) throw new Error('assertion failed');
     } finally {
@@ -113,14 +113,14 @@ describe('collation unit tests', () => {
     let _moved22 = false;
     const _b21 = new RangeBound('Unbounded', {});
     try {
-      const _b23 = new RangeBound('Included', { _0: 45 });
+      const _b23 = new RangeBound('Included', { _0: 45n });
       _moved22 = true;
       if (!(I64_isInRange(n, _b21, _b23))) throw new Error('assertion failed');
     } finally {
       if (!_moved22) dropOwned(_b21);
     }
     let _moved25 = false;
-    const _b24 = new RangeBound('Included', { _0: 40 });
+    const _b24 = new RangeBound('Included', { _0: 40n });
     try {
       const _b26 = new RangeBound('Unbounded', {});
       _moved25 = true;

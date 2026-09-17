@@ -1,9 +1,7 @@
-// Runs the emitted range_shapes against the real runtime. Against the parent
-// engine (b05f82c) `withinUnit` raises `TypeError: range(0, 1).contains is not
-// a function`, `evensToTen` raises `.stepBy is not a function`, `letters`
-// answers `["a"]` where Rust answers `['a', 'b', 'c']`, and `firstSlot` cannot
-// tell "no element" from "an element that is None" — all four silently, with a
-// diagnostic beside none of them.
+// Runs the emitted range_shapes against the real runtime.
+//
+// A Rust range is walked, tested and stepped as Rust walks it, and an element
+// that is `None` is not the absence of an element.
 
 import { expect, test } from 'bun:test';
 import {

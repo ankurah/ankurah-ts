@@ -169,48 +169,41 @@ fn a_for_loop_binds_the_element_of_what_it_iterates() {
 
 #[test]
 fn a_match_arm_binds_its_payload_for_the_body_it_guards() {
-    let mut c = Fixture::build(&[(
+    let c = Fixture::build(&[(
         "lib.rs",
         "use std::sync::Arc;\n\
          pub struct Inner { pub count: u8 }\n\
-         pub enum Held { One(Arc<Inner>), Nothing }\n\
-         pub struct S { pub held: Held }\n\
-         impl S {\n\
-           pub fn read(&self) -> u8 {\n\
-             match &self.held { Held::One(inner) => inner.count, Held::Nothing => 0 }\n\
-           }\n\
-         }",
+         pub enum Held { One(Arc<Inner>), Nothing }",
     )]);
-    let body = c.translated_method("lib.rs", "read");
-    // The arm's payload is an `Arc`, so reaching its field writes the accessor.
-    // The name itself is rewritten to the payload slot by the match translation,
-    // which is why the assertion is on the accessor and not on `inner`.
-    assert!(
-        body.contains(".value.count"),
-        "the arm's binding was not typed: {}",
-        body
+    let mut cx = c.context("lib.rs", None);
+    cx.push_fn(vec![]);
+    let held = c.named("lib.rs", "Held", vec![]);
+    let untyped = cx.bind_pattern(&pat("Held::One(inner)"), Some(&held));
+    assert!(untyped.is_empty(), "the arm's binding was not typed: {:?}", untyped);
+    let arc = c.system(
+        "std::sync::Arc",
+        vec![c.named("lib.rs", "Inner", vec![])],
     );
+    assert_eq!(cx.lookup("inner"), Some(arc));
 }
 
 #[test]
 fn an_if_let_binds_its_payload_for_the_branch_it_guards() {
-    let mut c = Fixture::build(&[(
+    let c = Fixture::build(&[(
         "lib.rs",
         "use std::sync::Arc;\n\
-         pub struct Inner { pub count: u8 }\n\
-         pub struct S { pub held: Option<Arc<Inner>> }\n\
-         impl S {\n\
-           pub fn read(&self) -> u8 {\n\
-             if let Some(inner) = &self.held { inner.count } else { 0 }\n\
-           }\n\
-         }",
+         pub struct Inner { pub count: u8 }",
     )]);
-    let body = c.translated_method("lib.rs", "read");
-    assert!(
-        body.contains("inner.value.count"),
-        "the branch's binding is an Arc: {}",
-        body
+    let mut cx = c.context("lib.rs", None);
+    cx.push_fn(vec![]);
+    let arc = c.system(
+        "std::sync::Arc",
+        vec![c.named("lib.rs", "Inner", vec![])],
     );
+    let held = c.system(OPTION, vec![arc.clone()]);
+    let untyped = cx.bind_pattern(&pat("Some(inner)"), Some(&held));
+    assert!(untyped.is_empty(), "the branch's binding was not typed: {:?}", untyped);
+    assert_eq!(cx.lookup("inner"), Some(arc));
 }
 
 #[test]

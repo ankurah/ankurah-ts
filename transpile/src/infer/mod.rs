@@ -9,6 +9,7 @@ pub mod closures;
 #[cfg(test)]
 mod closure_tests;
 mod context;
+mod variants;
 mod shapes;
 mod structs;
 #[cfg(test)]
@@ -31,6 +32,8 @@ mod vars;
 mod await_tests;
 #[cfg(test)]
 mod mismatch_tests;
+#[cfg(test)]
+mod borrow_tests;
 #[cfg(test)]
 mod vars_tests;
 

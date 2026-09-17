@@ -62,6 +62,14 @@ impl TypeContext<'_> {
             // `u64` the `Box<dyn Fn(u64) -> u64>` declares.
             return self.indirect_argument_types(&call.func);
         };
+        // A bare name may HOLD a callable rather than name a function: `f(4)`
+        // on a local `Arc<dyn Fn(u64) -> u64>` takes its argument types from
+        // what the value can be called with, which no declaration says.
+        if path.path.get_ident().is_some_and(|name| self.lookup(&name.to_string()).is_some()) {
+            if let Some(types) = self.indirect_argument_types(&call.func) {
+                return Some(types);
+            }
+        }
         if let Some(fields) = self.variant_argument_types(path, expected) {
             return Some(fields);
         }

@@ -109,6 +109,24 @@ fn claimed_here(t: &BodyTranslator, operand: &syn::Expr) -> String {
 /// everything after it and a `try` is a scope: outside it, the rest of the block
 /// names something nothing declares. It is never reached — the hole above it
 /// throws — but it still has to be code a JavaScript engine will read.
+/// Say that an `.await` is one the engine could not type, at the `.await`.
+///
+/// The value such an await answers with is one nothing here can release, and
+/// the position may never read it — a statement throws it away, and a tail
+/// hands it to a caller that asks the declared type, not this one. Reported
+/// where it is written, so the gap is said once whether or not anything reads
+/// it.
+pub(crate) fn report_a_refused_await(t: &BodyTranslator, await_expr: &syn::ExprAwait) {
+    let Some(tc) = &t.types else { return };
+    let tc = tc.borrow();
+    let mark = tc.sink.mark();
+    let answer = tc.resolve_expr(&syn::Expr::Await(await_expr.clone()));
+    tc.sink.rewind(mark);
+    if let Err(refusal) = answer {
+        t.fallback(syn::spanned::Spanned::span(await_expr), refusal.message);
+    }
+}
+
 pub(crate) fn statement_that_refused(
     t: &BodyTranslator,
     stmt: &syn::Stmt,

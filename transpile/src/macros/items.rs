@@ -11,6 +11,40 @@ use syn::{Expr, Pat, Token};
 
 use crate::body::BodyTranslator;
 
+/// What a `matches!` invocation is written as: the value it tests, the pattern
+/// it tests against, and the guard that pattern's bindings answer.
+struct MatchesWritten {
+    subject: Expr,
+    pat: Pat,
+    guard: Option<Expr>,
+}
+
+impl syn::parse::Parse for MatchesWritten {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let subject: Expr = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let pat = Pat::parse_multi_with_leading_vert(input)?;
+        let guard = if input.peek(Token![if]) {
+            input.parse::<Token![if]>()?;
+            Some(input.parse()?)
+        } else {
+            None
+        };
+        Ok(MatchesWritten { subject, pat, guard })
+    }
+}
+
+/// The expressions `matches!` types: its subject, and its guard where one is
+/// written. The pattern is not an expression.
+pub fn matches_operands(tokens: &TokenStream) -> Vec<Expr> {
+    let Ok(written) = syn::parse2::<MatchesWritten>(tokens.clone()) else {
+        return Vec::new();
+    };
+    let mut operands = vec![written.subject];
+    operands.extend(written.guard);
+    operands
+}
+
 /// `matches!(subject, pattern)` and `matches!(subject, pattern if guard)`.
 ///
 /// The port's answer is the same test a `match` arm would have written, which
@@ -18,27 +52,7 @@ use crate::body::BodyTranslator;
 /// inventing a second one: an enum is tested on its variant tag, an `Option` on
 /// `null`, and a literal by equality, in one place.
 pub fn matches_macro(tokens: &TokenStream, t: &BodyTranslator) -> Option<String> {
-    struct Written {
-        subject: Expr,
-        pat: Pat,
-        guard: Option<Expr>,
-    }
-    impl syn::parse::Parse for Written {
-        fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-            let subject: Expr = input.parse()?;
-            input.parse::<Token![,]>()?;
-            let pat = Pat::parse_multi_with_leading_vert(input)?;
-            let guard = if input.peek(Token![if]) {
-                input.parse::<Token![if]>()?;
-                Some(input.parse()?)
-            } else {
-                None
-            };
-            Ok(Written { subject, pat, guard })
-        }
-    }
-
-    let written = syn::parse2::<Written>(tokens.clone()).ok()?;
+    let written = syn::parse2::<MatchesWritten>(tokens.clone()).ok()?;
     let scrutinee_ty = t.borrowed_scrutinee_type(&written.subject);
     let value = t.expr_value(&written.subject);
 
@@ -127,30 +141,61 @@ pub fn stringify_macro(tokens: &TokenStream) -> String {
     super::format_emit::quoted(&tokens.to_string())
 }
 
+/// One `key => value` entry of a `hashmap!` literal.
+struct HashmapPair {
+    key: Expr,
+    value: Expr,
+}
+
+struct HashmapWritten(Vec<HashmapPair>);
+
+impl syn::parse::Parse for HashmapWritten {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let mut pairs = Vec::new();
+        while !input.is_empty() {
+            let key: Expr = input.parse()?;
+            input.parse::<Token![=>]>()?;
+            let value: Expr = input.parse()?;
+            pairs.push(HashmapPair { key, value });
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            }
+        }
+        Ok(HashmapWritten(pairs))
+    }
+}
+
+/// Every key and value a `hashmap!` holds, in written order.
+pub fn hashmap_operands(tokens: &TokenStream) -> Vec<Expr> {
+    let Ok(HashmapWritten(pairs)) = syn::parse2::<HashmapWritten>(tokens.clone()) else {
+        return Vec::new();
+    };
+    pairs
+        .into_iter()
+        .flat_map(|pair| [pair.key, pair.value])
+        .collect()
+}
+
+/// The one expression `anyhow!(value)` wraps, or the operands of its format
+/// form. Both shapes are typed by the emitter: the value decides whether
+/// anyhow wraps it or reads it as a message.
+pub fn anyhow_operands(tokens: &TokenStream) -> Vec<Expr> {
+    if super::format_call::written(tokens).is_some() {
+        return super::operands::formatting_operands(tokens);
+    }
+    syn::parse2::<Expr>(tokens.clone()).into_iter().collect()
+}
+
+/// The one expression `json!(value)` carries. Its token-DSL form is reported
+/// rather than read, so it has no operand.
+pub fn json_operands(tokens: &TokenStream) -> Vec<Expr> {
+    syn::parse2::<Expr>(tokens.clone()).into_iter().collect()
+}
+
 /// `hashmap!{ k => v, .. }` — maplit's map literal, which the port writes as the
 /// `Map` a `HashMap` becomes.
 pub fn hashmap_macro(tokens: &TokenStream, t: &BodyTranslator) -> Option<String> {
-    struct Pair {
-        key: Expr,
-        value: Expr,
-    }
-    struct Written(Vec<Pair>);
-    impl syn::parse::Parse for Written {
-        fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-            let mut pairs = Vec::new();
-            while !input.is_empty() {
-                let key: Expr = input.parse()?;
-                input.parse::<Token![=>]>()?;
-                let value: Expr = input.parse()?;
-                pairs.push(Pair { key, value });
-                if input.peek(Token![,]) {
-                    input.parse::<Token![,]>()?;
-                }
-            }
-            Ok(Written(pairs))
-        }
-    }
-    let Written(pairs) = syn::parse2::<Written>(tokens.clone()).ok()?;
+    let HashmapWritten(pairs) = syn::parse2::<HashmapWritten>(tokens.clone()).ok()?;
     let entries: Vec<String> = pairs
         .iter()
         .map(|p| format!("[{}, {}]", t.moved_value(&p.key), t.moved_value(&p.value)))

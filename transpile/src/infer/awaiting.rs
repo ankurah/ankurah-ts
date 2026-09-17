@@ -22,13 +22,23 @@ impl TypeContext<'_> {
             // A projection the impl table did not read through comes back as a
             // projection, which says less than the base does.
             .filter(|ty| !ty.mentions_projection() && !ty.mentions_infer());
+        // A call to a declared `async fn` returns what it writes (spec 4.10),
+        // so awaiting one is the identity. Read FIRST: a declared result that
+        // is ITSELF a future would otherwise be projected a second time, and
+        // the written `.await` would answer what two awaits answer.
+        if self.awaits_a_declared_async_call(&await_expr.base) {
+            let Some(inner) = output else { return Ok(base) };
+            return Err(self.refuse(
+                at,
+                format!(
+                    "`{}` is what this declared `async fn` answers with and is itself a future                      of `{}`; JavaScript's own `async` awaits such a value before the caller                      does, so the port has nothing to hold the outer future in",
+                    self.registry.describe(&base),
+                    self.registry.describe(&inner)
+                ),
+            ));
+        }
         if let Some(output) = output {
             return Ok(output);
-        }
-        // A call to a declared `async fn` returns what it writes (spec 4.10),
-        // so awaiting one is the identity.
-        if self.awaits_a_declared_async_call(&await_expr.base) {
-            return Ok(base);
         }
         Err(self.refuse(
             at,
@@ -43,7 +53,7 @@ impl TypeContext<'_> {
     ///
     /// Asked quietly: what the callee cannot be read as is the call's own
     /// failure to report, not this `await`'s.
-    pub(super) fn awaits_a_declared_async_call(&self, base: &syn::Expr) -> bool {
+    pub fn awaits_a_declared_async_call(&self, base: &syn::Expr) -> bool {
         let mark = self.sink.mark();
         let found = match super::calls::unparenthesise(base) {
             syn::Expr::MethodCall(call) => self
@@ -58,4 +68,5 @@ impl TypeContext<'_> {
         };
         self.sink.rewind(mark);
         found
-    }}
+    }
+}

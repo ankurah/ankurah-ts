@@ -23,7 +23,11 @@ impl TypeContext<'_> {
                 if let (Ok(left), Ok(right)) =
                     (self.resolve_expr(&bin.left), self.resolve_expr(&bin.right))
                 {
-                    self.constrain_here(syn::spanned::Spanned::span(&bin.right), &left, &right);
+                    self.constrain_compared(
+                        syn::spanned::Spanned::span(&bin.right),
+                        &left,
+                        &right,
+                    );
                 }
                 return Ok(Ty::Prim(Prim::Bool));
             }

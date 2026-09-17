@@ -303,7 +303,15 @@ impl<'a> BodyTranslator<'a> {
         // through `Future` it hands back the future's own type, and releasing
         // that would drop a value the await already moved.
         if let syn::Expr::Await(await_expr) = expr {
-            if self.quietly(|| self.resolve_expr_type(&await_expr.base)).ok().as_ref() == Some(&ty) {
+            // A call to a declared `async fn` answers what it writes, so the
+            // identity IS the answer there and what it produced is released.
+            let identity = self
+                .types
+                .as_ref()
+                .is_some_and(|tc| tc.borrow().awaits_a_declared_async_call(&await_expr.base));
+            if !identity
+                && self.quietly(|| self.resolve_expr_type(&await_expr.base)).ok().as_ref() == Some(&ty)
+            {
                 self.fallback(
                     syn::spanned::Spanned::span(expr),
                     "the engine could not say what awaiting this produces, so the value the \

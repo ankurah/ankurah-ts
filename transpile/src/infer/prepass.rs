@@ -97,6 +97,36 @@ impl Prepass<'_, '_> {
         self.tc.resolve_expr_as_written(expr).ok()
     }
 
+    /// What a `vec!` says about the values written in it.
+    ///
+    /// Rust's `vec![a, b]` holds ONE type, so the elements after the first are
+    /// constrained against it — a kinded literal beside a typed sibling takes
+    /// that sibling's width in either order. The repeat form's count is a
+    /// `usize`.
+    fn constrain_a_vec_literal(&mut self, mac: &syn::Macro) {
+        if mac.path.segments.last().map(|s| s.ident.to_string()).as_deref() != Some("vec") {
+            return;
+        }
+        if let Some(repeat) = crate::macros::vec_repeat_count(mac) {
+            let Some(found) = self.type_of(&repeat) else { return };
+            self.tc.constrain_here(
+                syn::spanned::Spanned::span(&repeat),
+                &Ty::Prim(crate::ty::Prim::Usize),
+                &found,
+            );
+            return;
+        }
+        let elements = crate::macros::vec_macro_elements(mac);
+        let Some(first) = elements.first().and_then(|e| self.type_of(e)) else {
+            return;
+        };
+        for element in &elements[1..] {
+            let Some(found) = self.type_of(element) else { continue };
+            self.tc
+                .constrain_here(syn::spanned::Spanned::span(element), &first, &found);
+        }
+    }
+
     /// Constrain what this expression is against what the body answers with.
     fn answer_with(&mut self, expr: &syn::Expr) {
         let (Some(returns), Some(found)) = (self.returns.clone(), self.type_of(expr)) else {
@@ -151,6 +181,7 @@ impl<'ast> Visit<'ast> for Prepass<'_, '_> {
             for arg in crate::macros::macro_argument_exprs(&mac.mac) {
                 self.visit_expr(&arg);
             }
+            self.constrain_a_vec_literal(&mac.mac);
             return;
         }
         syn::visit::visit_stmt(self, stmt);
@@ -290,6 +321,7 @@ impl<'ast> Visit<'ast> for Prepass<'_, '_> {
                 for arg in crate::macros::macro_argument_exprs(&mac.mac) {
                     self.visit_expr(&arg);
                 }
+                self.constrain_a_vec_literal(&mac.mac);
             }
             other => {
                 self.type_of(other);

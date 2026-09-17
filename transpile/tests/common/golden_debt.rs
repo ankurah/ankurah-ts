@@ -50,7 +50,7 @@ pub const TEXT_ONLY: [(&str, &str); 4] = [
 /// README already doubts. None of them is a reason to relax the check.
 /// What each golden still fails to compile with, as one entry per error:
 /// `<file>:<code>`, sorted. Every entry is a decision somebody read.
-pub const TYPECHECK_DEBT: [(&str, &[&str], &str); 7] = [
+pub const TYPECHECK_DEBT: [(&str, &[&str], &str); 8] = [
     (
         "an_unknown_nothing_settles",
         &[
@@ -72,6 +72,22 @@ pub const TYPECHECK_DEBT: [(&str, &[&str], &str); 7] = [
          inside the function now goes through the run-time dispatcher and reaches every impl; \
          what is left is the signature, and what a bound with a blanket impl behind it should \
          emit as is open",
+    ),
+    (
+        "a_callable_held_behind_a_bound",
+        &[
+            "a_callable_held_behind_a_bound/input.ts:TS2322",
+            "a_callable_held_behind_a_bound/input.ts:TS2322",
+            "a_callable_held_behind_a_bound/input.ts:TS2344",
+            "a_callable_held_behind_a_bound/input.ts:TS2345",
+            "a_callable_held_behind_a_bound/input.ts:TS7006",
+        ],
+        "an ASSOCIATED function re-declares the impl's type parameters, because a TypeScript \
+         static cannot read the class's, and it re-declares them WITHOUT the bounds the impl \
+         wrote: `static new<F>(inner: F)` under `class Doubler<F extends Invocable<..>>`. What \
+         the golden proves is the call — a callable held in an `Arc<F>` is invoked through the \
+         helper, and its argument takes the type the bound declares. Where an impl's bounds \
+         belong on an emitted associated function is the open question",
     ),
     (
         "a_conditional_impl_loses",

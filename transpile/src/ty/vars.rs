@@ -59,10 +59,24 @@ pub struct Contradiction {
     /// substituted in, so `xs.push("x")` on a `Vec<?0>` stands on `?0` even
     /// though neither side still spells it.
     pub touched: Vec<InferId>,
-    /// Would Rust coerce here? It does where a value MEETS a declared type and
-    /// nowhere inside one, and the re-check at the end of the solve has to ask
-    /// the same question the site asked.
-    pub coerces: bool,
+    /// What the site does with the two types, which decides how their
+    /// references are read. The re-check at the end of the solve asks the same
+    /// question the site asked.
+    pub site: Site,
+}
+
+/// What a constraint's site does with the two types it relates.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Site {
+    /// A value MEETS a declared type: an argument, a `let`'s annotation, a
+    /// return, a struct field. Rust coerces here, and what the target OWNS is
+    /// what the callee then releases.
+    Coercion,
+    /// The two are only COMPARED. Nothing is handed over and nothing is
+    /// released, and Rust compares through a borrow either side carries.
+    Comparison,
+    /// Inside a type argument, where Rust coerces nothing.
+    Nested,
 }
 
 /// Which unknown at a site a refusal takes. One site can also carry an
@@ -154,10 +168,9 @@ impl InferTable {
     /// The unknown a refusal answers with: minted at the refusing site and
     /// already standing for nothing.
     ///
-    /// A refusal is the engine's own gap, so it must contribute no type: what
-    /// it answers meets anything without binding, and every spelling path
-    /// reads it as unknown. Answering `()` instead made a later constraint
-    /// report the gap as the program's contradiction.
+    /// A refusal is the engine's own gap and must contribute no type: what it
+    /// answers meets anything without binding, and every spelling path reads it
+    /// as unknown.
     pub fn unresolvable_at_site(&mut self, line: usize, col: usize) -> InferId {
         let id = self.at_site(line, col, REFUSAL);
         self.poisoned.insert(id);

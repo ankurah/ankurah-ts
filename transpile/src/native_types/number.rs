@@ -1,41 +1,11 @@
-//! Rust's atomics as the plain values the port writes them as.
+//! A Rust primitive's methods as the JavaScript the port writes for them.
 //!
-//! ONE rule, and every part of the engine holds it: an atomic IS the value it
-//! holds. `AtomicUsize` and its numeric peers are a `number`, `AtomicBool` is a
-//! `boolean` (`name_map::system_shapes`), `new` is the argument, and `load`,
-//! `store`, `fetch_add` and `compare_exchange` are reads and writes of the
-//! place. A single-threaded host has nothing for an `Ordering` to say, so the
-//! argument is dropped.
-//!
-//! Leaving `AtomicBool` out of the constructor list left `AtomicBool.new(false)`
-//! standing in six emitted places — core's `resultset.ts`, `node.ts`,
-//! `context.ts` and `transaction.ts` — where nothing declares an `AtomicBool`:
-//! a `ReferenceError` on the line that builds the object.
+//! For: a `number` and a `bigint` have almost none of the methods Rust's
+//! integers and floats do, so each one is written out here — with the WIDTH,
+//! because that is what decides the answer, and a call whose width the engine
+//! could not resolve is refused rather than guessed (R12).
 
 use super::MethodTranslation;
-
-/// Every atomic whose value the port writes plainly, spelled as the corpus
-/// writes the type.
-///
-/// This list and `name_map`'s are the same list: an atomic the type mapping
-/// does not know is one whose constructor must not be lowered either, or the
-/// emitted code builds a plain value and then declares it as a class nothing
-/// exports.
-const ATOMICS: [&str; 4] = ["AtomicBool", "AtomicU32", "AtomicU64", "AtomicUsize"];
-
-/// `Atomic*::new(v)` is `v`: the atomic is the value it holds.
-pub fn translate_static(func: &str, args: &[String]) -> Option<String> {
-    if args.len() != 1 {
-        return None;
-    }
-    let (owner, method) = func
-        .rsplit_once("::")
-        .or_else(|| func.rsplit_once('.'))?;
-    if method != "new" || !ATOMICS.contains(&owner) {
-        return None;
-    }
-    Some(args[0].clone())
-}
 
 /// The four explicit families Rust offers for saying what should happen on
 /// overflow, as the free helper each one is in `@ankurah/base`.
@@ -105,42 +75,6 @@ pub fn translate(
         };
     }
     let result = match method {
-        // Load — just the value (strip Ordering arg)
-        "load" => receiver.to_string(),
-
-        // Store — assignment (strip Ordering arg)
-        "store" if args.len() >= 1 => format!("{} = {}", receiver, args[0]),
-
-        // Fetch-add — answers the old value and stores the new one.
-        //
-        // Rust's atomics WRAP at their width, whatever the build's debug
-        // assertions say: `AtomicU32::MAX.fetch_add(1)` stores `0`. A `+=` on a
-        // `number` went on counting, so the port and Rust disagreed from the
-        // first overflow on — and a `static mut` beside it already went through
-        // the checked helper, so the two spellings of one idea disagreed too.
-        "fetch_add" if args.len() >= 1 => {
-            return atomic_rmw("wrappingAdd", "+", receiver, &args[0], width)
-        }
-        "fetch_sub" if args.len() >= 1 => {
-            return atomic_rmw("wrappingSub", "-", receiver, &args[0], width)
-        }
-
-        // The value it swapped out, which is what Rust's `swap` answers.
-        "swap" if args.len() >= 1 => format!(
-            "(() => {{ const _v = {r}; {r} = {n}; return _v; }})()",
-            r = receiver,
-            n = args[0]
-        ),
-
-        // Compare-and-swap answers the value it FOUND: `Ok(old)` where the
-        // swap happened, `Err(old)` where it did not. Answered as a bare
-        // boolean, `is_ok` and `unwrap` ran on something that has neither.
-        "compare_exchange" | "compare_exchange_weak" if args.len() >= 2 => {
-            let found = format!("(() => {{ const _v = {r}; if (_v === {c})", r = receiver, c = args[0]);
-            let swap = format!(" {{ {r} = {n}; return Result.Ok(_v); }}", r = receiver, n = args[1]);
-            format!("{found}{swap} return Result.Err(_v); }})()")
-        }
-
         // `Ord::cmp` and `PartialOrd::partial_cmp` on a number: the ordering the
         // port writes as `-1 | 0 | 1`. A primitive has no `compareTo` method
         // for the call to land on, so the comparison is written out — through
@@ -233,48 +167,6 @@ pub fn translate(
         _ => return MethodTranslation::Passthrough,
     };
     MethodTranslation::Expr(result)
-}
-
-/// One atomic read-modify-write: the old value out, the wrapped new value in.
-///
-/// The width is the atomic's own. Without one the helper cannot answer, so the
-/// operation is refused rather than written with a guessed width — the same
-/// rule the explicit families take.
-fn atomic_rmw(
-    helper: &str,
-    operator: &str,
-    receiver: &str,
-    operand: &str,
-    width: Option<crate::ty::Prim>,
-) -> MethodTranslation {
-    match width {
-        Some(prim) => MethodTranslation::Expr(format!(
-            "(() => {{ const _v = {r}; {r} = {h}({r}, {n}, '{w}'); return _v; }})()",
-            r = receiver,
-            h = helper,
-            n = operand,
-            w = crate::operators::primitives::width_name(prim)
-        )),
-        // The one atomic that reaches here with no width is `AtomicU64`, whose
-        // TypeScript spelling and whose Rust width disagree — see
-        // `native_types::atomic_width`. An ordinary `+=` was written instead,
-        // which does not wrap where Rust does, and on a `u64` it put a `bigint`
-        // operand beside a `number` place, which JavaScript refuses to mix.
-        None => no_width(format!(
-            "`{}` on this atomic wraps at a width the port does not write the atomic as, so \
-             neither the wrap nor the operand's own type can be written here",
-            operator_name(operator)
-        )),
-    }
-}
-
-/// The Rust method an atomic read-modify-write came from, for the refusal to
-/// name.
-fn operator_name(operator: &str) -> &'static str {
-    match operator {
-        "-" => "fetch_sub",
-        _ => "fetch_add",
-    }
 }
 
 /// Is this width one the port writes as a `bigint`?
@@ -515,15 +407,12 @@ mod tests {
         }
     }
 
-    /// R5: a call whose answer needs a width the engine could not resolve emits
-    /// a hole, not a guess. The atomic one wrote `this.c + 1n` on a `number`
-    /// field — a `bigint` beside a `number`, which JavaScript refuses to mix —
-    /// under a message with eighteen spaces in the middle of it.
+    /// A call whose answer needs a width the engine could not resolve emits a
+    /// hole, not a guess: `this.c + 1n` on a `number` field puts a `bigint`
+    /// beside a `number`, which JavaScript refuses to mix.
     #[test]
     fn a_width_the_engine_could_not_resolve_is_a_hole() {
         for (method, args) in [
-            ("fetch_add", vec!["1"]),
-            ("fetch_sub", vec!["1"]),
             ("wrapping_add", vec!["1"]),
             ("checked_div", vec!["1"]),
             ("round", vec![]),

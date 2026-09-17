@@ -7,7 +7,7 @@ use crate::infer::TypeContext;
 use crate::testing::Fixture;
 use crate::ty::{InferTable, Prim, Ty};
 
-fn contradictions(c: &Fixture) -> Vec<String> {
+pub(super) fn contradictions(c: &Fixture) -> Vec<String> {
     c.messages()
         .into_iter()
         .filter(|m| m.contains("constrained to be the same type here and cannot be"))
@@ -545,4 +545,41 @@ fn a_bound_reads_through_the_type_as_written_and_no_further() {
     };
     assert_eq!(item(&owned), c.named("lib.rs", "Tag", vec![]));
     assert_ne!(item(&borrowed), c.named("lib.rs", "Tag", vec![]));
+}
+
+/// Rust's `vec![a, b]` holds ONE type, and the engine read only the first
+/// element: the rest stood at whatever they were.
+#[test]
+fn a_vec_literal_whose_elements_differ_reports() {
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub fn go() -> u16 { let xs = vec![1u8, 2u16]; xs[1] }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert!(!contradictions(&c).is_empty(), "{:?}", c.messages());
+}
+
+/// A kinded literal beside a typed sibling takes that sibling's width, in
+/// either written order, and says nothing.
+#[test]
+fn a_vec_literal_settles_its_kinded_elements_in_either_order() {
+    for written in ["vec![1, 2u64, 3]", "vec![1u64, 2, 3]"] {
+        let mut c = Fixture::build(&[(
+            "lib.rs",
+            &format!("pub fn go() -> u64 {{ let xs = {}; xs[0] }}", written),
+        )]);
+        let _ = c.emitted("lib.rs");
+        assert!(contradictions(&c).is_empty(), "{}: {:?}", written, c.messages());
+    }
+}
+
+/// `vec![v; n]` repeats its value `n` times, and Rust's `n` is a `usize`.
+#[test]
+fn a_repeat_count_that_is_not_a_usize_reports() {
+    let mut c = Fixture::build(&[(
+        "lib.rs",
+        "pub fn go(n: u8) -> Vec<u8> { vec![7u8; n] }",
+    )]);
+    let _ = c.emitted("lib.rs");
+    assert!(!contradictions(&c).is_empty(), "{:?}", c.messages());
 }

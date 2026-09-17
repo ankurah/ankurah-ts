@@ -25,6 +25,7 @@ pub(crate) mod dictionary;
 mod tests;
 #[cfg(test)]
 mod dictionary_tests;
+mod spellings;
 
 impl BodyTranslator<'_> {
     /// The function `?` calls on the error, where the two error types differ.
@@ -501,7 +502,7 @@ impl BodyTranslator<'_> {
                 self.fallback(
                     span,
                     format!(
-                        "`{}::{}` converts a `{}` to a `{}`, and the impl that performs it {}; \
+                        "`{}::{}` converts a `{}` to a `{}`, and {}; \
                          the value is written as it stands",
                         owner.join("::"),
                         method,
@@ -598,58 +599,5 @@ impl BodyTranslator<'_> {
         } else {
             format!("return {}", value)
         }
-    }
-
-    /// What a `?` operand has to be, given what the `?` itself has to produce.
-    pub(crate) fn try_operand_expectation(
-        &self,
-        expected: Option<&crate::ty::Ty>,
-    ) -> Option<crate::ty::Ty> {
-        self.types
-            .as_ref()?
-            .borrow()
-            .try_operand_expectation(expected)
-    }
-
-    /// Is this integer literal one the port writes as a `bigint`?
-    ///
-    /// The written suffix decides it where there is one; otherwise it is what
-    /// the position wants, which is how `n + 1` beside a `u64` writes `1n`.
-    pub(crate) fn is_bigint_literal(&self, lit: &syn::Lit, expected: Option<&crate::ty::Ty>) -> bool {
-        let syn::Lit::Int(int) = lit else { return false };
-        match int.suffix() {
-            "u64" | "i64" | "u128" | "i128" => return true,
-            "" => {}
-            _ => return false,
-        }
-        matches!(
-            expected.map(crate::ty::Ty::peel_refs),
-            Some(crate::ty::Ty::Prim(
-                crate::ty::Prim::U64
-                    | crate::ty::Prim::I64
-                    | crate::ty::Prim::U128
-                    | crate::ty::Prim::I128
-            ))
-        )
-    }
-
-    /// Is this the `Result<T, E>` the port writes as the runtime's `Result`?
-    pub(crate) fn is_result(&self, ty: &crate::ty::Ty) -> bool {
-        match &self.types {
-            Some(tc) => tc.borrow().is_result(ty),
-            None => false,
-        }
-    }
-
-    /// Is this the `Option<T>` the port writes as `T | null`?
-    pub(crate) fn is_nullable(&self, ty: &crate::ty::Ty) -> bool {
-        let Some(tc) = &self.types else { return false };
-        let Some(id) = ty.peel_refs().id() else {
-            return false;
-        };
-        matches!(
-            tc.borrow().registry.shapes().form(id),
-            Some(crate::name_map::system_shapes::Form::Nullable)
-        )
     }
 }

@@ -1,8 +1,7 @@
-// Runs the emitted byte_targets against the real runtime. E1: the parent engine
-// (b05f82c) answered a `number[]` from every function here whose target is a
-// `Vec<u8>`, so `instanceof Uint8Array` was false and every byte reader
-// downstream — `encode`, a `TextDecoder`, a comparison by byte — was reading
-// the wrong kind of object.
+// Runs the emitted byte_targets against the real runtime.
+//
+// A function whose target is a `Vec<u8>` answers a `Uint8Array`, which is what
+// every byte reader downstream needs it to be.
 
 import { expect, test } from 'bun:test';
 import { copyOf, descending, descendingLocal, doubled, firstComplement, oneByte } from './input.ts';

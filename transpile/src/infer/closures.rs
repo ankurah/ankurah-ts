@@ -267,11 +267,8 @@ impl TypeContext<'_> {
     }
 
     /// The callable type a closure has: `impl Fn(A, B) -> R` with what the
-    /// signature settled, which is the type Rust gives a closure everywhere a
-    /// closure's type is asked for.
-    ///
-    /// A parameter or a result the engine could not settle is refused rather
-    /// than filled with a guess, because a wrong `Fn` bound would pick a wrong
+    /// signature settled. A parameter or a result the engine could not settle
+    /// is refused rather than guessed, because a wrong `Fn` bound picks a wrong
     /// impl at every call that takes this closure.
     pub(super) fn callable_type(
         &self,

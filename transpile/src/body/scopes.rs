@@ -388,7 +388,12 @@ impl<'a> BodyTranslator<'a> {
         if !matches!(
             ty.peel_refs(),
             crate::ty::Ty::Param(_) | crate::ty::Ty::ImplTrait { .. } | crate::ty::Ty::Dyn { .. }
-        ) && !(holds_a_value && crate::name_map::holds_a_dyn_callable(tc.borrow().registry, &ty))
+        ) && !(holds_a_value
+            && crate::name_map::holds_a_dyn_callable(
+                tc.borrow().registry,
+                &ty,
+                &tc.borrow().param_bounds,
+            ))
         {
             return None;
         }

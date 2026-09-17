@@ -16,4 +16,4 @@ pub use def::{ArrayLen, IdSpaceExhausted, Prim, TraitRef, Ty, TypeId};
 pub use def::InferId;
 pub use subst::bind_params;
 pub use unify::{unify, Mismatch};
-pub use vars::{Contradiction, InferTable, VarKind, UNDECIDED_RESULT};
+pub use vars::{Contradiction, InferTable, Site, VarKind, UNDECIDED_RESULT};
