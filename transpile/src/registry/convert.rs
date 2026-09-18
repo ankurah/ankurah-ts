@@ -153,6 +153,42 @@ impl Probe<'_> {
         found
     }
 
+    /// What an operator on this left-hand type may take on the RIGHT, one
+    /// entry per impl written for it.
+    ///
+    /// `Rhs = Self` is the operator traits' DEFAULT, not a rule: an
+    /// `impl PartialEq<str> for CollectionId` compares two types that are not
+    /// one. A caller with no entries is looking at a primitive or at a type the
+    /// table does not carry, where the default is all there is.
+    pub fn operator_rhs_options(&self, trait_path: &str, lhs: &Ty) -> Vec<Ty> {
+        let Some(trait_id) = self.reg.system_type(trait_path) else { return Vec::new() };
+        let mut found = Vec::new();
+        for &id in self.reg.impls().of_trait(trait_id) {
+            let def = self.reg.impl_def(id);
+            let Some(implemented) = def.trait_ref.as_ref() else { continue };
+            if implemented.id != trait_id || implemented.args.len() > 1 {
+                continue;
+            }
+            // The impl's parameters are renamed apart for the length of the
+            // match, for the reason `ImplDef::match_pattern` gives.
+            let fresh: Vec<String> =
+                def.generics.iter().map(|g| format!("{}#r{}", g, id.0)).collect();
+            let rename: Subst = def
+                .generics
+                .iter()
+                .cloned()
+                .zip(fresh.iter().map(|f| Ty::Param(f.clone())))
+                .collect();
+            let mut subst = Subst::new();
+            if unify(&fresh, &def.self_ty.substitute(&rename), lhs, &mut subst).is_err() {
+                continue;
+            }
+            let written = implemented.args.first().unwrap_or(&def.self_ty);
+            found.push(written.substitute(&rename).substitute(&subst));
+        }
+        found
+    }
+
     /// The single impl of a trait whose self type is `subject` and whose one
     /// argument is `argument`.
     ///

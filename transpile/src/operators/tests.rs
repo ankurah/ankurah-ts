@@ -496,3 +496,39 @@ fn negating_a_signed_integer_goes_through_the_checked_helper() {
     assert!(smallest.contains("-2147483648"), "{}", smallest);
     assert!(!smallest.contains("checkedNeg"), "{}", smallest);
 }
+
+/// `Rhs = Self` is the comparison traits' DEFAULT, not a rule. Holding both
+/// operands to one type reported a program Rust accepts.
+#[test]
+fn a_comparison_holds_its_right_operand_to_the_impls_own_rhs() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Left { pub n: u32 }\n\
+         pub struct Right { pub n: u32 }\n\
+         impl PartialEq<Right> for Left {\n    \
+             fn eq(&self, other: &Right) -> bool { self.n == other.n }\n\
+         }\n\
+         pub fn same(left: &Left, right: &Right) -> bool { *left == *right }",
+    )]);
+    let _ = f.translated_method("lib.rs", "same");
+    assert!(
+        !f.messages().iter().any(|m| m.contains("constrained to be the same type")),
+        "{:?}",
+        f.messages()
+    );
+}
+
+/// The default is still what two types with no impl between them are held to.
+#[test]
+fn a_comparison_between_two_unrelated_types_still_reports() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        &format!("{TYPES}pub fn wrong(a: &Tag, b: &Loose) -> bool {{ *a == *b }}"),
+    )]);
+    let _ = f.translated_method("lib.rs", "wrong");
+    assert!(
+        f.messages().iter().any(|m| m.contains("constrained to be the same type")),
+        "{:?}",
+        f.messages()
+    );
+}

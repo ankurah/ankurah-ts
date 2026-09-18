@@ -216,6 +216,20 @@ impl BodyTranslator<'_> {
                 if self.names_a_unit_struct(&ident) {
                     return format!("new {}()", declared);
                 }
+                // A struct declared with BRACES is not a value under its own
+                // name however few fields it has: `struct Braced {}` written as
+                // `Braced` names a type where Rust needs a value, and emitting
+                // the class made a program rustc rejects run. A tuple struct's
+                // name IS a value — its own constructor function.
+                if self.names_a_braced_struct(&ident) {
+                    return self.hole(
+                        syn::spanned::Spanned::span(path),
+                        format!(
+                            "`{}` is declared with braces, so its name alone is a type rather than a value",
+                            ident
+                        ),
+                    );
+                }
                 if declared != written {
                     return declared;
                 }
@@ -242,6 +256,20 @@ impl BodyTranslator<'_> {
 
     /// Does this name resolve to a struct with no fields — a type whose only
     /// value is written by naming it?
+    /// Does this name refer to a struct written with braces?
+    fn names_a_braced_struct(&self, name: &str) -> bool {
+        let Some(tc) = self.types.as_ref() else { return false };
+        let tc = tc.borrow();
+        let Ok(Some(crate::registry::Def::Type(id))) =
+            tc.registry.lookup_type(tc.module, &[name.to_string()])
+        else {
+            return false;
+        };
+        tc.registry
+            .def(id)
+            .is_some_and(|def| def.constructor == Some(crate::types::Constructor::Braced))
+    }
+
     fn names_a_unit_struct(&self, name: &str) -> bool {
         let Some(tc) = self.types.as_ref() else { return false };
         let tc = tc.borrow();
@@ -257,7 +285,8 @@ impl BodyTranslator<'_> {
             return false;
         }
         tc.registry.def(id).is_some_and(|def| {
-            matches!(def.kind, crate::registry::TypeKind::Struct) && def.field_order.is_empty()
+            matches!(def.kind, crate::registry::TypeKind::Struct)
+                && def.constructor == Some(crate::types::Constructor::Unit)
         })
     }
 

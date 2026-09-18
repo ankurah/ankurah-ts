@@ -60,6 +60,6 @@ export function shifted(): bigint {
   return paired((() => {
     const text = '';
     return text;
-  })(), 7n, unsupported('the conversion for `A` cannot be named here'));
+  })(), 7n, (value: string) => unsupported('no impl converts what stands at `A` here'));
 }
 

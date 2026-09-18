@@ -16,11 +16,13 @@ pub(crate) mod ranking;
 #[cfg(test)]
 mod ranking_tests;
 pub(crate) mod deref;
+mod probe;
 pub(crate) mod signatures;
 
 pub use super::bounds::{Obligation, Undecided};
+pub use probe::Probe;
 use super::impls::{head_of, Bound, Head, ImplId};
-use super::{ModuleId, TypeRegistry};
+use super::TypeRegistry;
 use crate::ty::subst::Subst;
 use crate::ty::{bind_params, TraitRef, Ty, TypeId};
 
@@ -206,29 +208,7 @@ pub enum MethodError {
     DerefCycle { receiver: Ty },
 }
 
-/// What a call is being resolved in: the module that wrote it, and the bounds
-/// on the type parameters in scope, so that `self.notify()` inside a trait's
-/// own default body reaches the trait's declaration.
-pub struct Probe<'a> {
-    pub reg: &'a TypeRegistry,
-    pub module: ModuleId,
-    pub param_bounds: &'a [(String, TraitRef)],
-}
-
-impl<'a> Probe<'a> {
-    pub fn new(reg: &'a TypeRegistry, module: ModuleId) -> Probe<'a> {
-        Probe {
-            reg,
-            module,
-            param_bounds: &[],
-        }
-    }
-
-    pub fn with_bounds(mut self, bounds: &'a [(String, TraitRef)]) -> Probe<'a> {
-        self.param_bounds = bounds;
-        self
-    }
-
+impl Probe<'_> {
     // ── Method resolution ──────────────────────────────────────────────
 
     /// Which function `receiver.name(..)` calls.

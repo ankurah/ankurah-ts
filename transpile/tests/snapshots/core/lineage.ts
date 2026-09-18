@@ -274,7 +274,7 @@ class Comparison<G extends GetEvents> extends Struct {
     })();
     if (isCommon && this.meetCandidates.insert(id.clone())) {
       this.anyCommon = true;
-      for (const h of [...origins]) {
+      for (const h of [...origins.deref()]) {
         this.outstandingHeads.delete(h);
       }
       for (const p of parents) {

@@ -5,7 +5,7 @@
 //! and nearly every other module reads them, so they earn a file a reader can
 //! open without the machinery around them.
 
-use super::{impls, MethodSig, ModuleId, TypeKind, Vis};
+use super::{impls, MethodSig, ModuleId, Vis};
 use crate::ty::Ty;
 
 /// A declared type. Fields and method signatures are filled in after every
@@ -28,6 +28,10 @@ pub struct TypeDef {
     pub field_order: Vec<String>,
     /// Declared generic parameter names, in order.
     pub type_params: Vec<String>,
+    /// How a struct declaration lets its name be written. Rust accepts only the
+    /// unit form as a bare value, so `struct Braced {}` written as `Braced` is
+    /// an error rather than a construction.
+    pub constructor: Option<crate::types::Constructor>,
     /// What the declaration REQUIRES of those parameters, inline and in its
     /// `where` clause alike, resolved in the module that wrote it. A struct
     /// whose field is a bounded parameter is the only reader today:
@@ -40,6 +44,24 @@ pub struct TypeDef {
     pub param_defaults: Vec<Option<Ty>>,
 }
 
+/// What a named type is.
+#[derive(Debug, Clone)]
+pub enum TypeKind {
+    Struct,
+    Enum { variants: Vec<VariantDef> },
+    Trait,
+}
+
+/// An enum's variant, with the types of whatever it carries.
+///
+/// A tuple variant's fields are named `_0`, `_1`, the way emission writes them,
+/// so that `Foo::Bar(x)` in a pattern reads its type off position 0.
+#[derive(Debug, Clone)]
+pub struct VariantDef {
+    pub name: String,
+    pub fields: Vec<(String, Ty)>,
+}
+
 /// What `declare_type` needs. The crate's own structs and enums, the system
 /// types, and (from the std-surface step) types parsed out of Rust stub files
 /// all arrive through this one door.
@@ -49,6 +71,9 @@ pub struct TypeDecl {
     pub kind: TypeKind,
     pub type_params: Vec<String>,
     pub vis: Vis,
+    /// How a STRUCT declaration lets its name be written; nothing for an enum,
+    /// a trait or an alias.
+    pub constructor: Option<crate::types::Constructor>,
 }
 
 /// A type alias. Aliases are expanded where they are used rather than given an

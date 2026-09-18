@@ -1,13 +1,6 @@
-// Runs the dictionaries the emitted call sites wrote (spec 4.4b).
-//
-// Three properties, each of which the engine got wrong before this golden was
-// written. A concrete site whose conversion is a genuine `TryFrom` calls that
-// impl and hands its `Result` over as it stands — the site used to ask the
-// table for a `From`, find none, and write a hole that threw the moment `pick`
-// read the dictionary. A concrete site whose conversion is an infallible `From`
-// still has its answer wrapped. And a site the engine cannot name a type for
-// throws, where it used to hand over the conversion belonging to the argument
-// AFTER the one it could not type.
+// Runs the dictionaries the emitted call sites wrote (spec 4.4b): a fallible
+// conversion handed over as the `Result` it already answers, an infallible one
+// wrapped, and a conversion nothing performs held at its own parameter.
 
 import { expect, test } from 'bun:test';
 import { Sel, counted, parsed, refused, shifted } from './input.ts';
@@ -30,10 +23,10 @@ test('an infallible concrete site still has its answer wrapped', () => {
   sel!.drop();
 });
 
-test('a conversion the engine cannot name is a hole that throws', () => {
-  // At the parent this returned 7n: the block's type was dropped from the
-  // argument list, the `7i64` after it moved into its place, and the call was
-  // handed `From<i64>` — a conversion for a type standing nowhere in it.
+test('a conversion no impl performs is a hole that throws', () => {
+  // A hole dropped from the argument list rather than held at its own index
+  // let the `7i64` after it answer for the parameter before it, and `shifted`
+  // returned 7n through a conversion for a type standing nowhere in the call.
   expect(() => shifted()).toThrow();
 });
 

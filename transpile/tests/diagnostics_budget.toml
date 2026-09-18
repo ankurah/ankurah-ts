@@ -61,7 +61,7 @@ total = 85
 "this closure's parameters are X, X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what they hold" = 1
 
 [signals]
-total = 99
+total = 93
 
 [signals.by_cause]
 "this closure owns X and is written as an X, which is not a bare callable" = 18
@@ -70,7 +70,6 @@ total = 99
 "this closure owns X, X and is written as an X, which is not a bare callable" = 8
 "X is declared in more than one module of this crate, and this file names it unqualified: the import binds one of them and a signature written against the other names the wrong class. The crate index tells them apart with an alias" = 7
 "path qualifiers std, sync, atomic are dropped by name" = 6
-"X is bound here but the engine could not type it" = 5
 "X is written on a value the engine could not type, so which conversion it performs is not known" = 5
 "path qualifiers std, sync are dropped by name" = 5
 "X WRITES what the X holds, and it is reached through an accessor that hands out the value rather than the place" = 4
@@ -80,7 +79,6 @@ total = 99
 "X does not name a function here" = 2
 "no method X on X" = 2
 "the callee is not a path, so nothing names what it calls" = 2
-"X does not name a value here" = 1
 "X for X emits a method called X, and something on this class already has that name, so this one is not written and every call to it goes to the other" = 1
 "X for X is written as a call to X, which is the name it is emitted under here, so writing it would be a method that calls itself" = 1
 "X is declared in ./broadcast and ./signal, and the port flattens a crate's modules into one package surface, where two star exports of one name export it from neither. Each keeps its own name qualified by its module (broadcast_ListenerGuard)" = 1
@@ -88,15 +86,15 @@ total = 99
 "raw pointer type is not modelled" = 1
 
 [core]
-total = 1456
+total = 1409
 
 [core.by_cause]
 "obligation deferred: X (the subject is still a type parameter)" = 249
-"X is bound here but the engine could not type it" = 169
+"X is bound here but the engine could not type it" = 128
 "no method X on X" = 118
-"X has a type the engine cannot say owns anything, so nothing releases it" = 97
-"X does not name a function here" = 48
-"X converts the error from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 46
+"X has a type the engine cannot say owns anything, so nothing releases it" = 100
+"X does not name a function here" = 50
+"X converts the error from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 47
 "no X impl reaches X with the index written here" = 43
 "this X is written as a JSON literal rather than as one expression, and the hook reads the expression form only, so the value is X" = 36
 "the runtime writes this call as something whose result is not the value Rust returns, so the value the statement threw away is not released" = 34
@@ -107,15 +105,13 @@ total = 1456
 "X's X prints under Debug as whatever its X says, because X's TypeScript is written by hand and its X entry does not say it declares X, so there is none to call" = 30
 "X is declared in another module, so this impl is written as module-level functions here rather than as methods on its class" = 22
 "X keeps its keys in order, and the port's keyed containers iterate in insertion order" = 22
-"this X takes a droppable value apart, and the parts are released separately in Rust" = 19
+"this X takes a droppable value apart, and the parts are released separately in Rust" = 20
 "X has no expected type here, so what it converts to is not said and the value stands as it is" = 15
 "no field X on X" = 14
 "path qualifiers std, sync are dropped by name" = 14
-"X does not name a value here" = 12
 "X for X emits a method called X, and something on this class already has that name, so this one is not written and every call to it goes to the other" = 12
 "X has no hook, so it is emitted as a comment and what it stood for does not run" = 12
 "X converts from X to X through X, and the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 11
-"X is lowered as a X without the engine having named what it tests" = 11
 "X moves a field the runtime writes as a plain value" = 11
 "X's X prints under Debug as whatever its X says, because X has no Debug rendering in the port" = 11
 "the receiver of X is a projection the impl table could not settle, so the call is written from its name alone" = 11
@@ -133,6 +129,7 @@ total = 1456
 "X between X and X resolves through X, and no impl in the table performs it" = 6
 "X converts X to X, which is not a conversion between two numbers" = 6
 "X for X has no run-time test the dispatcher can make, because the impl for X is written for a type the port has no class to test against" = 6
+"X is lowered as a X without the engine having named what it tests" = 6
 "X is a receiver the engine does not model" = 5
 "X's X prints under Debug as whatever its X says, because X is not declared" = 5
 "this loop takes the sequence by value, and the runtime does not write it as an array" = 5
@@ -155,6 +152,7 @@ total = 1456
 "X is imported from ./task and @ankurah/base at once, and TypeScript has one name here where Rust had two paths" = 3
 "X is printed with X, and it prints as whatever its X says, because XIdX has no Debug rendering in the port" = 3
 "X on X is ambiguous between <Vec<T> as Extend<T>>::extend and <Vec<T> as Extend<&T>>::extend where T: Copy" = 3
+"X stands where X is declared, and the port writes its payload behind an accessor this position does not" = 3
 "X's X prints under Debug as whatever its X says, because XRX has no Debug rendering in the port" = 3
 "an unbounded range is not a sequence the port can build, and this one does not stand where a slice is taken" = 3
 "no arm of this match has a type the engine could read" = 3
@@ -181,6 +179,7 @@ total = 1456
 "X converts a X to a X, and no impl converts them" = 1
 "X converts from X" = 1
 "X converts from X to X through X, and no impl in the table performs it" = 1
+"X does not name a value here" = 1
 "X here is a X step taken through a bound, and the port writes each implementor's dereference differently — a field on X, nothing at all on a lock guard, a method on a crate's own class — so no one call stands for all of them" = 1
 "X here tests an X inside a function returning a X, which Rust does not allow, so one of the two types is not what the engine read" = 1
 "X is called on a value the engine cannot say owns anything, so nothing releases it" = 1
@@ -275,7 +274,7 @@ total = 192
 "path qualifiers std, sync are dropped by name" = 1
 
 [storage-indexeddb]
-total = 267
+total = 269
 
 [storage-indexeddb.by_cause]
 "X is bound here but the engine could not type it" = 50
@@ -304,6 +303,7 @@ total = 267
 "X has a type the engine cannot say owns anything, so nothing releases it" = 2
 "X has no hook, so it is emitted as a comment and what it stood for does not run" = 2
 "X here dispatches through a bound the engine cannot close, and no run-time selection among the trait's impls can be written because the trait has fewer than two impls, so nothing has to be chosen" = 2
+"X stands where X is declared, and the port writes its payload behind an accessor this position does not" = 2
 "no associated function X on X" = 2
 "path qualifiers iter are dropped by name" = 2
 "the receiver of X is a projection the impl table could not settle, so the call is written from its name alone" = 2

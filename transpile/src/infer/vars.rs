@@ -209,6 +209,14 @@ impl TypeContext<'_> {
         if *want == Ty::Never || *actual == Ty::Never {
             return;
         }
+        if site == Site::Coercion && self.vars.borrow().solving() {
+            let solved = (self.solved(want), self.solved(actual));
+            if let Some((holder, target)) =
+                self.handed_over_inside_a_holder(&self.probe(), &solved.0, &solved.1)
+            {
+                self.vars.borrow_mut().note_inside_a_holder(span, holder, target);
+            }
+        }
         if let Err(mismatch) = self.constrain(through_the_borrow, actual) {
             // What the failed walk stood on, read before anything else asks the
             // table a question of its own and overwrites the record.
@@ -309,6 +317,54 @@ impl TypeContext<'_> {
             }
             self.vars.borrow_mut().poison_ids(found.touched);
             self.sink.report(found.span, message);
+        }
+    }
+
+    /// Take back every answer the solve read through a bound it has since
+    /// decided to be false.
+    ///
+    /// A bound the solve never settled is not a false one, so an answer
+    /// standing on an unknown that nothing decided is left where it is: only a
+    /// subject the impl table has read and found no impl for withdraws its
+    /// answer, and with it every unknown that took it.
+    pub(super) fn settle_obligations(&self) {
+        let held = self.vars.borrow().provisional_answers();
+        let probe = self.probe();
+        for (var, answer) in held {
+            for (subject, bound) in &answer.stood_on {
+                let subject = self.solved(subject);
+                if subject.mentions_any_var() || !probe.rules_out(&subject, bound) {
+                    continue;
+                }
+                self.vars.borrow_mut().withdraw(var);
+                self.sink.report(
+                    answer.span,
+                    format!(
+                        "`{}` was read through an impl that requires `{}: {}`, which does not \
+                         hold; every type taken from it is left unknown",
+                        self.registry.describe(&self.solved(&answer.read)),
+                        self.registry.describe(&subject),
+                        self.registry.describe_traits(std::slice::from_ref(bound)),
+                    ),
+                );
+                break;
+            }
+        }
+    }
+
+    /// Say, once the solve is over, which coercion sites hand their value over
+    /// inside a holder rather than writing the accessor the payload is behind.
+    pub(super) fn settle_holder_coercions(&self) {
+        for (span, holder, want) in self.vars.borrow_mut().take_inside_a_holder() {
+            self.sink.report(
+                span,
+                format!(
+                    "`{}` stands where `{}` is declared, and the port writes its payload behind \
+                     an accessor this position does not; the callee is handed the holder",
+                    self.registry.describe(&holder),
+                    self.registry.describe(&want),
+                ),
+            );
         }
     }
 

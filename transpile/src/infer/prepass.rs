@@ -41,6 +41,10 @@ impl TypeContext<'_> {
         // what it could not do, so it outlives the rewind: re-checked against
         // the table the solve left, and said once at the site that asked.
         self.settle_contradictions();
+        // An answer the solve read through a bound it has since settled to
+        // false is not an answer: it and everything bound from it go.
+        self.settle_obligations();
+        self.settle_holder_coercions();
         // Past one round per variable the table has stopped being monotone,
         // which is a defect in the solver rather than a gap in the body.
         if let Some(rounds) = limit {
@@ -263,9 +267,13 @@ impl<'ast> Visit<'ast> for Prepass<'_, '_> {
             // `for (entity, event) in entity_events` types both names from the
             // sequence's item, which is a projection through `IntoIterator`.
             syn::Expr::ForLoop(for_loop) => {
-                let item = self
-                    .type_of(&for_loop.expr)
-                    .and_then(|seq| self.tc.iteration_item(&seq));
+                let sequence = self.type_of(&for_loop.expr);
+                let tc = &*self.tc;
+                let item = sequence.and_then(|seq| {
+                    tc.standing(syn::spanned::Spanned::span(&for_loop.expr), || {
+                        tc.iteration_item(&seq)
+                    })
+                });
                 self.visit_expr(&for_loop.expr);
                 self.in_pattern_scope(&for_loop.pat, item.as_ref(), |pass| {
                     pass.visit_block(&for_loop.body)

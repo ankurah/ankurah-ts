@@ -203,15 +203,16 @@ fn a_concrete_type_with_no_impl_at_all_is_a_hole() {
     );
 }
 
-/// AA1: an argument the engine cannot type holds its place. Dropped instead,
-/// every later argument moved one left before the positional match and the
-/// call was handed the conversion for a type standing somewhere else — a wrong
-/// dictionary at run time, silently.
+/// An argument the engine cannot type holds its place. Dropped instead, every
+/// later argument moved one left before the positional match and the call was
+/// handed the conversion for a type standing somewhere else — a wrong
+/// dictionary at run time, silently. The closure is the untypeable argument:
+/// nothing says what its parameter holds.
 #[test]
 fn an_argument_the_engine_cannot_type_does_not_shift_the_ones_after_it() {
     let (ts, messages) = translated(
         "pub fn pair<A: TryInto<Held>>(a: A, b: i64) -> Option<Held> { let _ = b; a.try_into().ok() }\n\
-         pub fn one() -> Option<Held> { pair({ let text = String::new(); text }, 7i64) }",
+         pub fn one() -> Option<Held> { pair(|x| x, 7i64) }",
         "one",
     );
     assert!(

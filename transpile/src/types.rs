@@ -108,6 +108,17 @@ impl RustFile {
     }
 }
 
+/// How a struct declaration lets its name be written.
+///
+/// Rust accepts a UNIT struct's name as a value on its own; a braced or a tuple
+/// declaration needs its braces or its call, and the bare name is an error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Constructor {
+    Unit,
+    Tuple,
+    Braced,
+}
+
 #[derive(Debug)]
 pub struct StructInfo {
     pub name: String,
@@ -135,10 +146,10 @@ pub struct StructInfo {
     /// it and the emitted JSON carried an `id` key and a `_phantom` beside it
     /// where serde writes the `EntityId` alone.
     pub serde_transparent: bool,
-    /// Written with BRACES — `struct Principal {}` rather than `struct Unit;`.
-    /// serde writes the first as `{}` and the second as `null`, and the port
-    /// wrote `null` for both.
-    pub braced: bool,
+    /// How the declaration lets the struct's name be written. serde writes a
+    /// braced empty struct as `{}` and a unit one as `null`, and the port wrote
+    /// `null` for both; Rust accepts only the unit form as a bare value.
+    pub constructor: Constructor,
     /// Where the type's name is written, so a derive hook that cannot carry
     /// something over reports it at the declaration a reader has to open.
     pub span: proc_macro2::Span,

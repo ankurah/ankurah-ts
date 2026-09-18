@@ -57,27 +57,7 @@ pub const DEREF_PATH: &str = "std::ops::Deref";
 pub const CLONE_PATH: &str = "std::clone::Clone";
 
 mod defs;
-pub use defs::{AliasDef, TypeDecl, TypeDef, ValueDef};
-
-/// What a named type is.
-#[derive(Debug, Clone)]
-pub enum TypeKind {
-    Struct,
-    Enum { variants: Vec<VariantDef> },
-    Trait,
-}
-
-/// An enum's variant, with the types of whatever it carries.
-///
-/// A tuple variant's fields are named `_0`, `_1`, the way emission writes them,
-/// so that `Foo::Bar(x)` in a pattern reads its type off position 0.
-#[derive(Debug, Clone)]
-pub struct VariantDef {
-    pub name: String,
-    pub fields: Vec<(String, Ty)>,
-}
-
-
+pub use defs::{AliasDef, TypeDecl, TypeDef, TypeKind, ValueDef, VariantDef};
 
 /// Types the corpus names but nothing declares — `ulid::Ulid`, `anyhow::Error`,
 /// `serde::Deserializer`. They keep a distinct identity and their written name,
@@ -326,6 +306,7 @@ impl TypeRegistry {
         );
         self.defs.push(TypeDef {
             field_order: Vec::new(),
+            constructor: decl.constructor,
             module,
             name: decl.name,
             kind: decl.kind,

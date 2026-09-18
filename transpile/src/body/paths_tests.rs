@@ -187,3 +187,25 @@ fn a_unit_struct_written_as_a_value_is_an_instance() {
     let ts = f.translated_method("lib.rs", "make");
     assert!(ts.contains("new Mock()"), "{}", ts);
 }
+
+/// `struct Braced {}` has no fields and is still not a value under its own
+/// name: Rust needs the braces. Treating an empty field list as the unit form
+/// emitted `new Braced()` for a program rustc rejects.
+#[test]
+fn a_braced_struct_written_as_a_value_is_refused() {
+    let mut f = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Braced {}\n\
+         pub struct Unit;\n\
+         pub fn braced() -> Braced { Braced }\n\
+         pub fn unit() -> Unit { Unit }",
+    )]);
+    let braced = f.translated_method("lib.rs", "braced");
+    assert!(braced.contains("unsupported("), "{braced}");
+    assert!(
+        f.messages().iter().any(|m| m.contains("is declared with braces")),
+        "{:?}",
+        f.messages()
+    );
+    assert!(f.translated_method("lib.rs", "unit").contains("new Unit()"));
+}

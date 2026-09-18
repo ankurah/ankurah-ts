@@ -4,6 +4,8 @@
 pub(crate) mod arguments;
 mod awaiting;
 mod branches;
+#[cfg(test)]
+mod branch_tests;
 pub(crate) mod calls;
 pub mod closures;
 #[cfg(test)]
@@ -25,7 +27,10 @@ mod operands;
 mod prepass;
 #[cfg(test)]
 mod prepass_tests;
+mod as_written;
+mod block_type;
 mod scope;
+mod standing;
 mod mismatch;
 mod vars;
 #[cfg(test)]
@@ -36,6 +41,8 @@ mod mismatch_tests;
 mod borrow_tests;
 #[cfg(test)]
 mod vars_tests;
+#[cfg(test)]
+mod obligation_tests;
 
 pub use closures::ClosureSig;
 pub use context::TypeContext;

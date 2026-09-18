@@ -132,3 +132,43 @@ fn a_bound_that_concretely_fails_still_loses_to_the_deref() {
     assert!(found.obligations.is_empty(), "{:?}", found.obligations);
     assert!(!found.contested);
 }
+
+/// One `AutoWrap` with a by-value method gated on a bound, and a borrowed one
+/// that always answers. Rust tries the borrow only after the by-value
+/// adjustment at the same step.
+const A_CONDITIONAL_BY_VALUE_AND_A_BORROWED_ONE: &str = "\
+pub trait Red {}\n\
+pub struct R;\n\
+impl Red for R {}\n\
+pub struct AutoWrap<T> { pub held: Option<T> }\n\
+impl<T: Red> AutoWrap<T> { pub fn decide(self) -> String { String::new() } }\n\
+pub trait Decide { fn decide(&self) -> u32; }\n\
+impl<T> Decide for AutoWrap<T> { fn decide(&self) -> u32 { 20 } }\n\
+";
+
+#[test]
+fn an_unsettled_by_value_candidate_contests_the_borrow_at_its_own_step() {
+    // Rust tries the by-value adjustment first, so a bound the solve has not
+    // settled leaves which method is called open. Reading the borrow's answer
+    // as settled filed the two returns as a contradiction of the program.
+    let c = Fixture::build(&[("lib.rs", A_CONDITIONAL_BY_VALUE_AND_A_BORROWED_ONE)]);
+    let wrap = c.named("lib.rs", "AutoWrap", vec![Ty::Var(InferId(0))]);
+    let found = c
+        .probe("lib.rs")
+        .resolve_method(&wrap, "decide")
+        .expect("the by-value candidate stands");
+    assert_eq!(found.obligations.len(), 1);
+    assert_eq!(found.obligations[0].reason, Undecided::Unsettled);
+    assert!(found.contested);
+}
+
+#[test]
+fn the_same_call_on_a_settled_receiver_takes_the_by_value_method_outright() {
+    let c = Fixture::build(&[("lib.rs", A_CONDITIONAL_BY_VALUE_AND_A_BORROWED_ONE)]);
+    let r = c.named("lib.rs", "R", vec![]);
+    let wrap = c.named("lib.rs", "AutoWrap", vec![r]);
+    let found = c.probe("lib.rs").resolve_method(&wrap, "decide").unwrap();
+    assert_eq!(found.ret, c.system("std::string::String", vec![]));
+    assert!(found.obligations.is_empty(), "{:?}", found.obligations);
+    assert!(!found.contested);
+}

@@ -141,6 +141,36 @@ impl TypeContext<'_> {
         borrows.unique && (borrows.owned || !releases)
     }
 
+    /// The holder a value is handed over inside, where the declared type is
+    /// what that holder derefs to.
+    ///
+    /// Rust coerces `&Arc<Inner>` to `&Inner`, and the port writes an `Arc` as
+    /// an object whose payload is behind an accessor — so the emitted call
+    /// hands the holder itself over and the callee reads `undefined`. The
+    /// method-call path writes the accessor; a coercion site does not, and says
+    /// so until it does.
+    pub(super) fn handed_over_inside_a_holder(
+        &self,
+        probe: &crate::registry::Probe<'_>,
+        want: &Ty,
+        found: &Ty,
+    ) -> Option<(Ty, Ty)> {
+        let want = want.peel_refs();
+        let mut at = found.peel_refs().clone();
+        if at == *want {
+            return None;
+        }
+        for _ in 0..8 {
+            let step = probe.deref_once(&at)?;
+            let written = step.accessor.is_some();
+            if *step.to.peel_refs() == *want {
+                return written.then(|| (found.peel_refs().clone(), want.clone()));
+            }
+            at = step.to;
+        }
+        None
+    }
+
     fn any_disagrees(&self, probe: &crate::registry::Probe<'_>, xs: &[Ty], ys: &[Ty]) -> bool {
         xs.iter().zip(ys).any(|(x, y)| self.disagrees(probe, x, y, Site::Nested))
     }

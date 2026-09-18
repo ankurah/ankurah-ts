@@ -8,6 +8,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::def::{InferId, TraitRef, Ty};
+use super::provisional::Provisional;
 use super::unify::{unify_with, Mismatch, Unknowns};
 
 /// What a variable is allowed to stand for.
@@ -112,7 +113,7 @@ pub struct InferTable {
     /// Variables a constraint with no solution touched. What such a variable
     /// stands for is a type the engine cannot defend, so it answers as an
     /// unknown and the binding that happened to come first stops answering.
-    poisoned: HashSet<InferId>,
+    pub(super) poisoned: HashSet<InferId>,
     /// Constraints with no solution, in the order they were met.
     contradictions: Vec<Contradiction>,
     /// What each restricted variable may stand for. Only an unsuffixed literal
@@ -128,7 +129,12 @@ pub struct InferTable {
     scratch_bindings: usize,
     /// The unknowns the last unification walked through, in the order it met
     /// them. A failed constraint stands on exactly these.
-    touched: Vec<InferId>,
+    pub(super) touched: Vec<InferId>,
+    /// The unknowns standing for an answer read through an undecided bound.
+    pub(super) provisional: HashMap<InferId, Provisional>,
+    /// Coercion sites whose value is handed over inside a holder: the span, the
+    /// holder, and what the position declared.
+    inside_a_holder: Vec<(proc_macro2::Span, Ty, Ty)>,
 }
 
 impl InferTable {
@@ -307,6 +313,21 @@ impl InferTable {
         }
     }
 
+    /// Keep a coercion site that hands its value over inside a holder. The walk
+    /// that raises it is quiet, so the site is said once the solve is done.
+    pub fn note_inside_a_holder(&mut self, span: proc_macro2::Span, holder: Ty, want: Ty) {
+        let at = span.start();
+        if self.inside_a_holder.iter().any(|(other, ..)| other.start() == at) {
+            return;
+        }
+        self.inside_a_holder.push((span, holder, want));
+    }
+
+    /// Those sites, leaving none behind.
+    pub fn take_inside_a_holder(&mut self) -> Vec<(proc_macro2::Span, Ty, Ty)> {
+        std::mem::take(&mut self.inside_a_holder)
+    }
+
     /// Keep a constraint that had no solution, to be re-checked and reported
     /// once the solve is done.
     pub fn record_contradiction(&mut self, found: Contradiction) {
@@ -382,9 +403,12 @@ impl InferTable {
             for var in self.journal.split_off(made) {
                 self.bound[var.0 as usize] = None;
             }
+            return answer;
         }
+        self.note_derivations();
         answer
     }
+
 }
 
 /// The table as a unification walk sees it: an unknown on either side, bound
@@ -425,7 +449,7 @@ impl Unknowns for BodyVars<'_> {
 }
 
 impl InferTable {
-    fn assign(&mut self, var: InferId, ty: &Ty) -> Result<(), Mismatch> {
+    pub(super) fn assign(&mut self, var: InferId, ty: &Ty) -> Result<(), Mismatch> {
         // A poisoned variable meets anything and holds nothing: one constraint
         // with no solution is the report, and every constraint after it would
         // say the same failure again in another position.

@@ -10,6 +10,7 @@ fn a_struct(name: &str) -> TypeDecl {
         kind: TypeKind::Struct,
         type_params: Vec::new(),
         vis: Vis::Public,
+        constructor: Some(crate::types::Constructor::Unit),
     }
 }
 

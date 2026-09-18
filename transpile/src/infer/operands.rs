@@ -16,16 +16,18 @@ impl TypeContext<'_> {
     pub(super) fn binary_type(&self, bin: &syn::ExprBinary, expected: Option<&Ty>) -> Result<Ty, Diag> {
         use syn::BinOp::*;
         match bin.op {
-            // A comparison answers `bool` whatever it compares, but the two
-            // sides are one type, which is what gives an unsuffixed literal its
-            // width: `n < 5` where `n: u64` compares two 64-bit values.
+            // A comparison answers `bool` whatever it compares, and what the
+            // right operand must be is the comparison impl's own `Rhs` — the
+            // left type itself only where the trait's `Rhs = Self` default
+            // stands, which is what gives an unsuffixed literal its width:
+            // `n < 5` where `n: u64` compares two 64-bit values.
             Eq(_) | Ne(_) | Lt(_) | Le(_) | Gt(_) | Ge(_) => {
                 if let (Ok(left), Ok(right)) =
                     (self.resolve_expr(&bin.left), self.resolve_expr(&bin.right))
                 {
                     self.constrain_compared(
                         syn::spanned::Spanned::span(&bin.right),
-                        &left,
+                        &self.compared_against(&bin.op, &left, &right),
                         &right,
                     );
                 }
@@ -102,6 +104,34 @@ impl TypeContext<'_> {
     /// the substitution that matched it, so there is nothing here to put in
     /// their place. Asking is not translating: what the right operand could not
     /// say is reported where the operator is written.
+    /// What a comparison holds its RIGHT operand to.
+    ///
+    /// Rust's `PartialEq<Rhs = Self>` and `PartialOrd<Rhs = Self>` need not
+    /// compare a type with itself. Where the left type has one comparison impl
+    /// that impl's `Rhs` is the answer; where it has several, the one the right
+    /// operand can already be; where it has none, or where several remain open,
+    /// the default stands and the two sides are one type.
+    fn compared_against(&self, op: &syn::BinOp, left: &Ty, right: &Ty) -> Ty {
+        let Some(trait_path) = crate::operators::operator_trait(op) else {
+            return left.clone();
+        };
+        let probe = self.probe();
+        let options = match probe.operator_rhs_options(&trait_path, left) {
+            empty if empty.is_empty() => probe.operator_rhs_options(&trait_path, left.peel_refs()),
+            written => written,
+        };
+        if let [only] = options.as_slice() {
+            return only.clone();
+        }
+        let mut fits = options
+            .iter()
+            .filter(|rhs| self.vars.borrow().clone().unify(rhs, right).is_ok());
+        match (fits.next(), fits.next()) {
+            (Some(rhs), None) => rhs.clone(),
+            _ => left.clone(),
+        }
+    }
+
     pub(super) fn overloaded_result(&self, bin: &syn::ExprBinary, left: &Ty) -> Option<Ty> {
         let trait_path = crate::operators::operator_trait(&bin.op)?;
         let mark = self.sink.mark();

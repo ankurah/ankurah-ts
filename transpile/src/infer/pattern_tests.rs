@@ -380,3 +380,37 @@ fn a_range_of_two_literals_takes_the_width_the_body_asks_for() {
         c.messages()
     );
 }
+
+/// An owned array iterates by value. Reading the borrowed impl's item for an
+/// owned receiver made every element a borrow, which is what kept the rule
+/// against handing a borrow where a value is owned from being read everywhere.
+#[test]
+fn an_owned_array_hands_out_its_elements_by_value() {
+    let c = Fixture::build(&[("lib.rs", "pub struct S;")]);
+    let cx = c.context("lib.rs", None);
+    let array = Ty::Array {
+        elem: Box::new(Ty::Prim(Prim::U8)),
+        len: crate::ty::ArrayLen::Lit(4),
+    };
+    assert_eq!(cx.iteration_item(&array), Some(Ty::Prim(Prim::U8)));
+}
+
+/// Rust's match ergonomics: matching a non-reference pattern against a
+/// reference binds every name under it by reference.
+#[test]
+fn an_arm_matched_through_a_reference_binds_by_reference() {
+    let c = Fixture::build(&[(
+        "lib.rs",
+        "pub struct Tag { pub n: u32 }\npub enum Holder { One(Tag), None }",
+    )]);
+    let cx = c.context("lib.rs", None);
+    let holder = c.named("lib.rs", "Holder", vec![]);
+    let tag = c.named("lib.rs", "Tag", vec![]);
+    let arm: syn::Arm = syn::parse_str("Holder::One(tag) => 0").expect("an arm");
+    let borrowed = Ty::Ref { mutable: false, inner: Box::new(holder) };
+    let bound = cx.names_a_pattern_binds(&arm.pat, Some(&borrowed));
+    assert_eq!(
+        bound,
+        vec![("tag".to_string(), Some(Ty::Ref { mutable: false, inner: Box::new(tag) }))]
+    );
+}

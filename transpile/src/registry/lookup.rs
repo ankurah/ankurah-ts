@@ -134,16 +134,19 @@ impl TypeRegistry {
     /// The type a path names where the path IS a value, carrying nothing: the
     /// enum of a unit variant, or a unit struct.
     ///
-    /// Both are a bare path with no call and no braces. A unit struct left
-    /// untyped left the argument of `w.set(Marker)` typeless, and with it every
-    /// unknown the receiver carried.
+    /// Both are a bare path with no call and no braces. A struct declared with
+    /// braces or with a tuple body is NOT one of them however few fields it has:
+    /// `struct Braced {}` written as `Braced` names a type where a value has to
+    /// stand, which Rust rejects.
     pub fn type_written_as_a_value(&self, from: ModuleId, segments: &[String]) -> Option<Ty> {
         let id = match self.lookup_variant(from, segments) {
             Some((id, _)) => id,
             None => match self.lookup_type(from, segments) {
                 Ok(Some(Def::Type(id))) => {
                     let def = self.def(id)?;
-                    if !matches!(def.kind, TypeKind::Struct) || !def.field_order.is_empty() {
+                    if !matches!(def.kind, TypeKind::Struct)
+                        || def.constructor != Some(crate::types::Constructor::Unit)
+                    {
                         return None;
                     }
                     id

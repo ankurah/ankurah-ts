@@ -301,8 +301,30 @@ impl Probe<'_> {
         // An impl whose bound the solve has not settled is a second chance:
         // `impl<A: Step> Iterator for RangeInclusive<A>` cannot prove `?0: Step`
         // while `?0` is open, and `for id in 1..=6` then settled nothing.
-        self.project_supplied(base, trait_, name, false)
-            .or_else(|| self.project_supplied(base, trait_, name, true))
+        if let Some(settled) = self.project_supplied(base, trait_, name, false) {
+            return Some(settled);
+        }
+        // An answer only that second chance gives is worth exactly what those
+        // bounds are worth, so it travels with them: the caller holds it until
+        // the solve decides them, and takes it back if one turns out false.
+        let (found, stood_on) = self.project_admitting_unsettled(base, trait_, name);
+        if found.is_some() {
+            self.note_deferred(stood_on);
+        }
+        found
+    }
+
+    /// The same search, admitting an impl whose own bounds are merely
+    /// unsettled, and saying which bounds the answer then stood on.
+    fn project_admitting_unsettled(
+        &self,
+        base: &Ty,
+        trait_: Option<&TraitRef>,
+        name: &str,
+    ) -> (Option<Ty>, Vec<(Ty, TraitRef)>) {
+        let mut stood_on = Vec::new();
+        let found = self.project_supplied_recording(base, trait_, name, true, &mut stood_on);
+        (found, stood_on)
     }
 
     fn project_supplied(
@@ -311,6 +333,17 @@ impl Probe<'_> {
         trait_: Option<&TraitRef>,
         name: &str,
         admit_unsettled: bool,
+    ) -> Option<Ty> {
+        self.project_supplied_recording(base, trait_, name, admit_unsettled, &mut Vec::new())
+    }
+
+    fn project_supplied_recording(
+        &self,
+        base: &Ty,
+        trait_: Option<&TraitRef>,
+        name: &str,
+        admit_unsettled: bool,
+        stood_on: &mut Vec<(Ty, TraitRef)>,
     ) -> Option<Ty> {
         let mut found: Option<Ty> = None;
         let ids: Vec<ImplId> = match trait_ {
@@ -355,7 +388,10 @@ impl Probe<'_> {
                 Some(deferred) if deferred.is_empty() => {}
                 Some(deferred)
                     if admit_unsettled
-                        && deferred.iter().all(|o| o.reason == Undecided::Unsettled) => {}
+                        && deferred.iter().all(|o| o.reason == Undecided::Unsettled) =>
+                {
+                    stood_on.extend(deferred.into_iter().map(|o| (o.subject, o.bound)));
+                }
                 _ => continue,
             }
             if let Some(tr) = trait_ {
@@ -382,29 +418,46 @@ impl Probe<'_> {
     }}
 
 #[cfg(test)]
-mod i10_tests {
+mod bound_assoc_tests {
     use crate::testing::Fixture;
+    use crate::ty::{TraitRef, Ty};
 
-    /// I10: a bound that only INHERITS an associated name used to answer first
-    /// and stop the search, so the bound that actually BINDS it — written later
-    /// — was never read. Written order is not the question a bound answers.
+    /// A bound that only INHERITS an associated name answered first and stopped
+    /// the search, so the bound that BINDS it — written later — was never read.
+    /// Written order is not the question a bound answers.
     #[test]
     fn a_bound_that_binds_the_name_wins_over_one_that_only_inherits_it() {
-        let mut c = Fixture::build(&[(
+        let c = Fixture::build(&[(
             "lib.rs",
             "pub trait Holds { type Held; fn held(&self) -> Self::Held; }\n\
              pub trait AlsoHolds: Holds {}\n\
              pub struct Tag { pub n: u32 }\n\
              pub fn read<T: Holds + AlsoHolds<Held = Tag>>(t: &T) -> u32 { t.held().n }",
         )]);
-        let ts = c.translated_method("lib.rs", "read");
-        assert!(
-            !c.messages().iter().any(|m| m.contains("no method") || m.contains("could not")),
-            "the binding is read through the later bound: {:?}\n{}",
-            c.messages(),
-            ts
-        );
-        assert!(ts.contains(".n"), "{}", ts);
+        let trait_id = |name: &str| match c.named("lib.rs", name, vec![]) {
+            Ty::Named { id, .. } => id,
+            other => panic!("{other:?}"),
+        };
+        let bounds = [
+            (
+                "T".to_string(),
+                TraitRef { id: trait_id("Holds"), args: Vec::new(), bindings: Vec::new() },
+            ),
+            (
+                "T".to_string(),
+                TraitRef {
+                    id: trait_id("AlsoHolds"),
+                    args: Vec::new(),
+                    bindings: vec![("Held".to_string(), c.named("lib.rs", "Tag", vec![]))],
+                },
+            ),
+        ];
+        let held = c.probe("lib.rs").with_bounds(&bounds).normalize(&Ty::Assoc {
+            base: Box::new(Ty::Param("T".to_string())),
+            trait_: None,
+            name: "Held".to_string(),
+        });
+        assert_eq!(held, c.named("lib.rs", "Tag", vec![]));
     }
 }
 

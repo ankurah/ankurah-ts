@@ -125,7 +125,12 @@ impl Probe<'_> {
     /// `B` not meeting `Red` is a fact, so `w.go()` on a `Wrap<B>` reaches
     /// `Inner::go` through `Deref`. An unknown standing where `B` will be is a
     /// question the engine has not closed, so an unsettled candidate stops the
-    /// walk at its own depth and its obligation travels with the answer.
+    /// walk where it stands and its obligation travels with the answer.
+    ///
+    /// Rust's own order is one step at a time and, within a step, by value
+    /// before either borrow, so an unsettled candidate at an earlier BORROW of
+    /// one step contests a later borrow of that same step exactly as it
+    /// contests a deeper step.
     pub(super) fn walk_chain(
         &self,
         candidates: &[Ty],
@@ -136,16 +141,19 @@ impl Probe<'_> {
         in_scope_only: bool,
     ) -> Result<Option<MethodResolution>, MethodError> {
         let mut deferred: Option<MethodResolution> = None;
-        let mut unsettled_at: Option<usize> = None;
+        let mut unsettled_at: Option<(usize, usize)> = None;
         let mut contested = false;
         'chain: for (depth, candidate) in candidates.iter().enumerate() {
-            for autoref in [AutoRef::None, AutoRef::Shared, AutoRef::Mut] {
+            for (borrow, autoref) in [AutoRef::None, AutoRef::Shared, AutoRef::Mut]
+                .into_iter()
+                .enumerate()
+            {
                 let found = self.pick(candidate, autoref, name, explicit, in_scope_only)?;
                 let Some(pick) = found else { continue };
                 // Past an unsettled candidate the walk only counts: a second
                 // answer here means which method Rust calls is decided by the
                 // bound, so the caller must not read this call's result yet.
-                if unsettled_at.is_some_and(|at| depth > at) {
+                if unsettled_at.is_some_and(|at| (depth, borrow) > at) {
                     contested = true;
                     break 'chain;
                 }
@@ -175,7 +183,7 @@ impl Probe<'_> {
                     return Ok(Some(found));
                 }
                 if unsettled {
-                    unsettled_at.get_or_insert(depth);
+                    unsettled_at.get_or_insert((depth, borrow));
                 }
                 deferred.get_or_insert(found);
             }

@@ -299,10 +299,29 @@ impl TypeContext<'_> {
             trait_: Some(Box::new(trait_ref)),
             name: name.to_string(),
         };
-        let normalized = self.probe().normalize(&projection);
+        let probe = self.probe();
+        let normalized = probe.normalize(&projection);
         // A projection that did not normalise comes back as itself, which is the
         // truth about it and not an answer the translator can use.
-        (normalized != projection).then_some(normalized)
+        if normalized == projection {
+            return None;
+        }
+        // An answer the impl table could give only by assuming a bound nothing
+        // has settled is held at an unknown of its own, so the solve can take
+        // it back — and everything bound from it — if the bound turns out
+        // false. The walk that writes a body binds nothing, and asks after the
+        // solve has already decided.
+        let stood_on = probe.take_deferred();
+        let span = self.standing_at();
+        match (stood_on.is_empty() || !self.vars.borrow().solving(), span) {
+            (false, Some(span)) => Some(self.vars.borrow_mut().provisionally(
+                &projection,
+                &normalized,
+                stood_on,
+                span,
+            )),
+            _ => Some(normalized),
+        }
     }
 
     /// The element type of a sequence, for a slice pattern. A slice pattern

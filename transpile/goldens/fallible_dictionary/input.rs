@@ -6,10 +6,10 @@
 //! so it is handed over as it stands. Asked for a `From` instead, this site
 //! found nothing and wrote a hole that threw the moment `pick` read it.
 //!
-//! `shifted` is the other half. Its first argument is a block whose type the
-//! engine cannot name. Dropped from the list instead of held at its own index,
-//! the `7` after it answered for the parameter before it, and the call was
-//! handed `From<i64>` — a conversion for a type that stands nowhere in it.
+//! `shifted` is the other half. Nothing converts its first argument's `String`
+//! to a `Sel`, so the conversion at that parameter is a hole. Held at its own
+//! index the hole stands there; dropped from the list, the `7` after it
+//! answered for the parameter before it and the call was handed `From<i64>`.
 
 pub struct Sel {
     pub text: String,

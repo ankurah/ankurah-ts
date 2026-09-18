@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/broadcast.rs
-import { Struct, Enum, Drop, Result, Arc, Weak, RwLock, OwnedClosure, Invocable, wrappingAdd, HashMap, keyHash, Sender, UnboundedSender } from '@ankurah/base';
+import { Struct, Enum, Drop, Result, Arc, Weak, RwLock, OwnedClosure, invokeRef, Invocable, dropOwned, wrappingAdd, HashMap, keyHash, Sender, UnboundedSender } from '@ankurah/base';
 
 export class BroadcastId extends Struct {
   _0: number;
@@ -63,33 +63,37 @@ export class Broadcast<T extends Clone = void> extends Struct {
         listeners.drop();
       }
     })();
-    {
-      const _v = subscribers.splitLast();
-      if (_v != null) {
-        const [last, rest] = _v;
-        for (const callback of rest) {
-          callback.match({
+    try {
+      {
+        const _v = subscribers.length > 0 ? [subscribers.at(-1), subscribers.slice(0, -1)] : null;
+        if (_v != null) {
+          const [last, rest] = _v;
+          for (const callback of rest) {
+            callback.match({
+              Payload: (v) => {
+                const callback = v._0;
+                return invokeRef(callback.value, value.clone());
+              },
+              NotifyOnly: (v) => {
+                const callback = v._0;
+                return invokeRef(callback.value);
+              },
+            });
+          }
+          return last.match({
             Payload: (v) => {
               const callback = v._0;
-              return callback(value.clone());
+              return invokeRef(callback.value, value);
             },
             NotifyOnly: (v) => {
               const callback = v._0;
-              return callback();
+              return invokeRef(callback.value);
             },
           });
         }
-        return last.match({
-          Payload: (v) => {
-            const callback = v._0;
-            return callback(value);
-          },
-          NotifyOnly: (v) => {
-            const callback = v._0;
-            return callback();
-          },
-        });
       }
+    } finally {
+      dropOwned(subscribers);
     }
   }
 

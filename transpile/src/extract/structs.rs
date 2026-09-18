@@ -17,7 +17,11 @@ pub(super) fn extract_struct(s: &syn::ItemStruct, features: Option<&crate::cfg::
         param_defaults: type_param_defaults(&s.generics),
         derives: extract_derives(&attrs),
         serde_transparent: has_serde_flag(&attrs, "transparent"),
-        braced: matches!(s.fields, syn::Fields::Named(_)),
+        constructor: match s.fields {
+            syn::Fields::Named(_) => crate::types::Constructor::Braced,
+            syn::Fields::Unnamed(_) => crate::types::Constructor::Tuple,
+            syn::Fields::Unit => crate::types::Constructor::Unit,
+        },
         span: s.ident.span(),
     }
 }

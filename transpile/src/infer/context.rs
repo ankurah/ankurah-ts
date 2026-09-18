@@ -54,12 +54,13 @@ pub struct TypeContext<'a> {
     /// parameters standing for nothing.
     pub(super) closure_wants:
         std::cell::RefCell<std::collections::HashMap<crate::body::Position, Ty>>,
-    /// The expressions the walk that WRITES a body is inside, innermost last.
+    /// The expressions either walk is inside, innermost last.
     ///
-    /// That walk reads a solved table. Where it meets a constraint the solve
-    /// never saw, this says which expression was being written, so the gap is
-    /// reported where the source stands rather than aborting the crate.
-    pub(super) writing_site: std::cell::RefCell<Vec<proc_macro2::Span>>,
+    /// A question asked deep inside an expression has no position of its own,
+    /// and two reports need one: a constraint the writing walk meets that the
+    /// solve never saw, and an answer the solve read through a bound that later
+    /// turns out false.
+    pub(super) standing_at: std::cell::RefCell<Vec<proc_macro2::Span>>,
     /// Where a constraint the solve never saw was met, one span per binding
     /// the writing walk's scratch copy would have made.
     pub(super) unsolved_sites: std::cell::RefCell<Vec<proc_macro2::Span>>,
@@ -91,7 +92,7 @@ impl<'a> TypeContext<'a> {
             question_scope: std::cell::RefCell::new(Vec::new()),
             vars: std::cell::RefCell::new(InferTable::new()),
             closure_wants: std::cell::RefCell::new(std::collections::HashMap::new()),
-            writing_site: std::cell::RefCell::new(Vec::new()),
+            standing_at: std::cell::RefCell::new(Vec::new()),
             unsolved_sites: std::cell::RefCell::new(Vec::new()),
             sink,
         }
@@ -99,7 +100,7 @@ impl<'a> TypeContext<'a> {
 
     /// The type of a block's tail expression, which is the block's own type.
     pub fn block_tail_type(&self, block: &syn::Block) -> Result<Ty, Diag> {
-        self.resolve_block(block)
+        self.resolve_block_expecting(block, None)
     }
 
     /// Is this the declared `Option`? Asked by identity, so a crate type that
@@ -261,47 +262,7 @@ impl<'a> TypeContext<'a> {
         self.inside(expr, || self.expr_type(expr, expected).map(|ty| self.solved(&ty)))
     }
 
-    /// Answer a question about `expr` with the writing walk standing at it, so
-    /// a constraint that walk meets is reported where the source wrote it.
-    fn inside<T>(&self, expr: &syn::Expr, answer: impl FnOnce() -> T) -> T {
-        if self.vars.borrow().solving() {
-            return answer();
-        }
-        self.writing_site.borrow_mut().push(expr.span());
-        let out = answer();
-        self.writing_site.borrow_mut().pop();
-        out
-    }
-
-    /// Note that the walk that writes a body met a constraint the solve never
-    /// saw, at the innermost expression it is inside.
-    pub(super) fn note_unsolved_site(&self) {
-        let at = self.writing_site.borrow().last().copied();
-        if let Some(at) = at {
-            self.unsolved_sites.borrow_mut().push(at);
-        }
-    }
-
-    /// Where such constraints have been met so far.
-    pub fn unsolved_sites(&self) -> Vec<proc_macro2::Span> {
-        self.unsolved_sites.borrow().clone()
-    }
-
-    /// The same, with the body's unknowns still standing, while the SOLVE runs.
-    ///
-    /// A constraint raised over solved types no longer says which unknown it
-    /// stood on, so nothing can be poisoned. The walk that WRITES the body
-    /// takes the settled answer, because an unknown offered to it is one it
-    /// could bind.
-    pub fn resolve_expr_as_written(&self, expr: &syn::Expr) -> Result<Ty, Diag> {
-        let found = self.inside(expr, || self.expr_type(expr, None))?;
-        match self.vars.borrow().solving() {
-            true => Ok(found),
-            false => Ok(self.solved(&found)),
-        }
-    }
-
-    fn expr_type(&self, expr: &syn::Expr, expected: Option<&Ty>) -> Result<Ty, Diag> {
+    pub(super) fn expr_type(&self, expr: &syn::Expr, expected: Option<&Ty>) -> Result<Ty, Diag> {
         match expr {
             syn::Expr::Path(path) if path.path.is_ident("self") => self
                 .scopes
@@ -530,33 +491,22 @@ impl<'a> TypeContext<'a> {
 
             syn::Expr::Macro(mac) => self.macro_type(&mac.mac, expected),
 
-            syn::Expr::Block(b) => match b.block.stmts.last() {
-                Some(syn::Stmt::Expr(tail, None)) => self.resolve_expr_expecting(tail, expected),
-                _ => Err(self.refuse(
-                    expr.span(),
-                    "block has no tail expression to take a type from",
-                )),
-            },
+            syn::Expr::Block(b) => self.with_the_blocks_own_lets(&b.block, || {
+                match b.block.stmts.last() {
+                    Some(syn::Stmt::Expr(tail, None)) => {
+                        self.resolve_expr_expecting(tail, expected)
+                    }
+                    _ => Err(self.refuse(
+                        expr.span(),
+                        "block has no tail expression to take a type from",
+                    )),
+                }
+            }),
 
             other => Err(self.refuse(
                 other.span(),
                 format!("`{}` expressions are not typed yet", expr_form(other)),
             )),
-        }
-    }
-
-    fn resolve_block(&self, block: &syn::Block) -> Result<Ty, Diag> {
-        self.resolve_block_expecting(block, None)
-    }
-
-    pub(super) fn resolve_block_expecting(
-        &self,
-        block: &syn::Block,
-        expected: Option<&Ty>,
-    ) -> Result<Ty, Diag> {
-        match block.stmts.last() {
-            Some(syn::Stmt::Expr(tail, None)) => self.resolve_expr_expecting(tail, expected),
-            _ => Ok(Ty::Unit),
         }
     }
 

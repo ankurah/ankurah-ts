@@ -104,7 +104,7 @@ pub(super) fn of_struct(reg: &TypeRegistry, info: &StructInfo) -> Result<StructS
         // `principal.bin`'s one item says `{}`, which is what G2's oracle
         // caught the first time it ran.
         return Ok(StructSchema {
-            body: match info.braced {
+            body: match info.constructor == crate::types::Constructor::Braced {
                 true => Body::Named(Vec::new()),
                 false => Body::Unit,
             },

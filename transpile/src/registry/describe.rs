@@ -86,7 +86,7 @@ impl TypeRegistry {
         })
     }
 
-    fn describe_traits(&self, traits: &[TraitRef]) -> String {
+    pub(crate) fn describe_traits(&self, traits: &[TraitRef]) -> String {
         traits
             .iter()
             .map(|t| self.describe_trait(t))

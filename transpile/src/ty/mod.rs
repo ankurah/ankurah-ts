@@ -4,6 +4,7 @@
 
 mod def;
 pub mod prim_consts;
+mod provisional;
 mod query;
 pub mod subst;
 mod unify;

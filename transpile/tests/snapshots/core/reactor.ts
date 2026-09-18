@@ -8,6 +8,7 @@ import { CandidateChanges } from './reactor/candidate_changes';
 import { GapFetcher } from './reactor/fetch_gap';
 import { ReactorSubInner, ReactorSubscription, ReactorSubscriptionId } from './reactor/subscription';
 import { Subscription } from './reactor/subscription_state';
+import { ReactorUpdateItem } from './reactor/update';
 import { WatcherOp, WatcherSet } from './reactor/watcherset';
 import { EntityResultSet } from './resultset';
 import { ValueType } from './value/index';
@@ -94,23 +95,44 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
     })();
     if ((_m3 as any)?.$jump === 'return') return (_m3 as any).$value;
     const subscription = (_m3 as any);
-    const queries = subscription.takeAllQueries();
-    let watcherSet = this._0.value.watcherSet.value.lock();
     try {
-      for (const [queryId, queryState] of queries) {
-        {
-          const _v = queryState.selection;
-          if (_v != null) {
-            const selection = _v;
-            watcherSet.value.recursePredicateWatchers(queryState.collectionId, selection.predicate, [subId, queryId], new WatcherOp('Remove', {}));
+      let _moved4 = false;
+      const queries = subscription.takeAllQueries();
+      try {
+        let watcherSet = this._0.value.watcherSet.value.lock();
+        try {
+          _moved4 = true;
+          const _seq5 = queries.intoEntries();
+          let _at6 = 0;
+          try {
+            while (_at6 < _seq5.length) {
+              const [queryId, queryState] = _seq5[_at6++];
+              try {
+                {
+                  const _v = queryState.selection;
+                  if (_v != null) {
+                    const selection = _v;
+                    watcherSet.value.recursePredicateWatchers(queryState.collectionId, selection.predicate, [subId, queryId], new WatcherOp('Remove', {}));
+                  }
+                }
+                const entityIds = queryState.resultset.keys();
+                watcherSet.value.removeEntitySubscriptions(subId, entityIds);
+              } finally {
+                queryState.drop();
+              }
+            }
+          } finally {
+            dropOwned(_seq5.slice(_at6));
           }
+          return Result.Ok([]);
+        } finally {
+          watcherSet.drop();
         }
-        const entityIds = queryState.resultset.keys();
-        watcherSet.value.removeEntitySubscriptions(subId, entityIds);
+      } finally {
+        if (!_moved4) dropOwned(queries);
       }
-      return Result.Ok([]);
     } finally {
-      watcherSet.drop();
+      subscription.drop();
     }
   }
 
@@ -131,23 +153,33 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
     })();
     if ((_m3 as any)?.$jump === 'return') return (_m3 as any).$value;
     const subscription = (_m3 as any);
-    const _r4 = subscription.removeQuery(queryId).okOr(new SubscriptionError('PredicateNotFound', {}));
-    if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-    const queryState = _r4.unwrap();
-    {
-      const _v = queryState.selection;
-      if (_v != null) {
-        const selection = _v;
-        let watcherSet = this._0.value.watcherSet.value.lock();
-        try {
-          const watcherId = [subscriptionId, queryId];
-          watcherSet.value.recursePredicateWatchers(queryState.collectionId, selection.predicate, watcherId, new WatcherOp('Remove', {}));
-        } finally {
-          watcherSet.drop();
+    try {
+      const _m4 = subscription.removeQuery(queryId);
+      const _m5 = new SubscriptionError('PredicateNotFound', {});
+      const _r6 = (_m4 != null ? (_m5.drop(), Result.Ok(_m4!)) : Result.Err(_m5));
+      if (_r6.isErr()) return Result.Err(_r6.unwrapErr());
+      const queryState = _r6.unwrap();
+      try {
+        {
+          const _v = queryState.selection;
+          if (_v != null) {
+            const selection = _v;
+            let watcherSet = this._0.value.watcherSet.value.lock();
+            try {
+              const watcherId = [subscriptionId, queryId];
+              watcherSet.value.recursePredicateWatchers(queryState.collectionId, selection.predicate, watcherId, new WatcherOp('Remove', {}));
+            } finally {
+              watcherSet.drop();
+            }
+          }
         }
+        return Result.Ok([]);
+      } finally {
+        queryState.drop();
       }
+    } finally {
+      subscription.drop();
     }
-    return Result.Ok([]);
   }
 
   addEntitySubscriptions(subscriptionId: ReactorSubscriptionId, entityIds: EntityId[]): void {
@@ -163,14 +195,18 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
       const _v = subscription;
       if (_v != null) {
         const subscription = _v;
-        let watcherSet = this._0.value.watcherSet.value.lock();
         try {
-          for (const entityId of entityIds) {
-            subscription.addEntitySubscription(entityId);
-            watcherSet.value.addEntitySubscription(subscriptionId, entityId);
+          let watcherSet = this._0.value.watcherSet.value.lock();
+          try {
+            for (const entityId of entityIds) {
+              subscription.addEntitySubscription(entityId);
+              watcherSet.value.addEntitySubscription(subscriptionId, entityId);
+            }
+          } finally {
+            watcherSet.drop();
           }
         } finally {
-          watcherSet.drop();
+          subscription.drop();
         }
       }
     }
@@ -223,37 +259,47 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
             })();
             if ((_m3 as any)?.$jump === 'return') return (_m3 as any).$value;
             const subscription = (_m3 as any);
-            const _r4 = await node.fetchEntitiesFromLocal(collectionId, selection);
-            if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
-            const includedEntities = _r4.unwrap();
-            _moved0 = true;
-            let _moved6 = false;
-            const _b5 = collectionId.clone();
             try {
-              const _b7 = resultset.clone();
-              _moved6 = true;
-              const _r8 = subscription.registerQuery(queryId, _b5, _b7, gapFetcher);
-              if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
-              _r8.drop();
+              const _r4 = await node.fetchEntitiesFromLocal(collectionId, selection);
+              if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
+              const includedEntities = _r4.unwrap();
+              _moved0 = true;
+              let _moved6 = false;
+              const _b5 = collectionId.clone();
+              try {
+                const _b7 = resultset.clone();
+                _moved6 = true;
+                const _r8 = subscription.registerQuery(queryId, _b5, _b7, gapFetcher);
+                if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+                _r8.drop();
+              } finally {
+                if (!_moved6) dropOwned(_b5);
+              }
+              let _moved9 = false;
+              let reactorUpdateItems: ReactorUpdateItem<E, Ev>[] = [];
+              try {
+                let _moved11 = false;
+                const _b10 = collectionId.clone();
+                try {
+                  const _b12 = selection.clone();
+                  const _r13 = subscription.updateQuery(queryId, _b10, _b12, includedEntities, 1, reactorUpdateItems);
+                  if (_r13.isErr()) return Result.Err(_r13.unwrapErr());
+                  _moved11 = true;
+                  const _newlyAdded = _r13.unwrap();
+                  await subscription.fillGapsForQuery(queryId, reactorUpdateItems);
+                  resultset.setLoaded(true);
+                  preNotifyHook.preNotify(1);
+                  _moved9 = true;
+                  subscription.sendUpdate(reactorUpdateItems);
+                  return Result.Ok([]);
+                } finally {
+                  if (!_moved11) dropOwned(_b10);
+                }
+              } finally {
+                if (!_moved9) dropOwned(reactorUpdateItems);
+              }
             } finally {
-              if (!_moved6) dropOwned(_b5);
-            }
-            let reactorUpdateItems = [];
-            let _moved10 = false;
-            const _b9 = collectionId.clone();
-            try {
-              const _b11 = selection.clone();
-              const _r12 = subscription.updateQuery(queryId, _b9, _b11, includedEntities, 1, reactorUpdateItems);
-              if (_r12.isErr()) return Result.Err(_r12.unwrapErr());
-              _moved10 = true;
-              const _newlyAdded = _r12.unwrap();
-              await subscription.fillGapsForQuery(queryId, reactorUpdateItems);
-              resultset.setLoaded(true);
-              preNotifyHook.preNotify(1);
-              subscription.sendUpdate(reactorUpdateItems);
-              return Result.Ok([]);
-            } finally {
-              if (!_moved10) dropOwned(_b9);
+              subscription.drop();
             }
           } finally {
             if (!_moved0) gapFetcher.drop();
@@ -290,23 +336,33 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
         })();
         if ((_m3 as any)?.$jump === 'return') return (_m3 as any).$value;
         const subscription = (_m3 as any);
-        let reactorUpdateItems = [];
-        let _moved5 = false;
-        const _b4 = collectionId.clone();
         try {
-          const _b6 = selection.clone();
-          const _r7 = subscription.updateQuery(queryId, _b4, _b6, includedEntities, version, reactorUpdateItems);
-          if (_r7.isErr()) return Result.Err(_r7.unwrapErr());
-          _moved5 = true;
-          const _newlyAdded = _r7.unwrap();
-          await subscription.fillGapsForQuery(queryId, reactorUpdateItems);
-          preNotifyHook.preNotify(version);
-          if (!(reactorUpdateItems.length === 0)) {
-            subscription.sendUpdate(reactorUpdateItems);
+          let _moved4 = false;
+          let reactorUpdateItems: ReactorUpdateItem<E, Ev>[] = [];
+          try {
+            let _moved6 = false;
+            const _b5 = collectionId.clone();
+            try {
+              const _b7 = selection.clone();
+              const _r8 = subscription.updateQuery(queryId, _b5, _b7, includedEntities, version, reactorUpdateItems);
+              if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+              _moved6 = true;
+              const _newlyAdded = _r8.unwrap();
+              await subscription.fillGapsForQuery(queryId, reactorUpdateItems);
+              preNotifyHook.preNotify(version);
+              if (!(reactorUpdateItems.length === 0)) {
+                _moved4 = true;
+                subscription.sendUpdate(reactorUpdateItems);
+              }
+              return Result.Ok([]);
+            } finally {
+              if (!_moved6) dropOwned(_b5);
+            }
+          } finally {
+            if (!_moved4) dropOwned(reactorUpdateItems);
           }
-          return Result.Ok([]);
         } finally {
-          if (!_moved5) dropOwned(_b4);
+          subscription.drop();
         }
       } finally {
         selection.drop();
@@ -418,29 +474,43 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
         })();
         if ((_m2 as any)?.$jump === 'return') return (_m2 as any).$value;
         const subscription = (_m2 as any);
-        const _r3 = await node.fetchEntitiesFromLocal(collectionId, selection);
-        if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
-        let _moved4 = false;
-        const includedEntities = _r3.unwrap();
         try {
-          const resultset = subscription.upsertQuery(queryId, collectionId.clone(), node, cdata);
-          let _moved6 = false;
-          const _b5 = collectionId.clone();
+          const _r3 = await node.fetchEntitiesFromLocal(collectionId, selection);
+          if (_r3.isErr()) return Result.Err(_r3.unwrapErr());
+          let _moved4 = false;
+          const includedEntities = _r3.unwrap();
           try {
-            const _b7 = selection.clone();
-            _moved4 = true;
-            const _r8 = subscription.updateQuery(queryId, _b5, _b7, includedEntities, version, []);
-            if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
-            _moved6 = true;
-            let allEntities = _r8.unwrap();
-            await subscription.fillGapsForQueryEntities(queryId, allEntities);
-            resultset.setLoaded(true);
-            return Result.Ok(allEntities);
+            const resultset = subscription.upsertQuery(queryId, collectionId.clone(), node, cdata);
+            try {
+              let _moved6 = false;
+              const _b5 = collectionId.clone();
+              try {
+                const _b7 = selection.clone();
+                _moved4 = true;
+                const _r8 = subscription.updateQuery(queryId, _b5, _b7, includedEntities, version, []);
+                if (_r8.isErr()) return Result.Err(_r8.unwrapErr());
+                _moved6 = true;
+                let _moved9 = false;
+                let allEntities = _r8.unwrap();
+                try {
+                  await subscription.fillGapsForQueryEntities(queryId, allEntities);
+                  resultset.setLoaded(true);
+                  _moved9 = true;
+                  return Result.Ok(allEntities);
+                } finally {
+                  if (!_moved9) dropOwned(allEntities);
+                }
+              } finally {
+                if (!_moved6) dropOwned(_b5);
+              }
+            } finally {
+              resultset.drop();
+            }
           } finally {
-            if (!_moved6) dropOwned(_b5);
+            if (!_moved4) dropOwned(includedEntities);
           }
         } finally {
-          if (!_moved4) dropOwned(includedEntities);
+          subscription.drop();
         }
       } finally {
         selection.drop();

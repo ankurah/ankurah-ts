@@ -770,6 +770,13 @@ The engine mints an unknown for each and lets the body bind it.
   written sites. `at_site(line, column, index)` mints on the first ask and
   answers with the same variable after, so the second walk reads what the first
   bound instead of minting an unknown nothing has seen.
+- **A block asked for its type binds its own `let`s first.** A block written as
+  an expression is read from outside, where none of its statements has bound
+  anything, and its tail often names a local the block itself introduced. Each
+  `let` is bound in order, seeing the ones above it, before the tail is read,
+  and both walks read it the same way. Without it
+  `let subscribers = { let listeners = ..; listeners.values()... }` left the
+  binding untyped and every use of it below dispatched by name.
 - **Unification is symmetric for a variable and one-sided for an impl.** One
   structural walk serves both (`transpile/src/ty/unify.rs`): impl matching binds
   only the parameters the impl declared, into a `Subst`; the body solver may bind
@@ -1203,15 +1210,6 @@ addressed by the step that found it.
   — `Weak::as_ptr` and `Arc::as_ptr` are the corpus's only uses, both immediately
   cast to `usize` for an identity. One of the two oracle sites the engine does
   not cover is `Weak::as_ptr` for this reason.
-- **A block's own `let`s are not in scope when the block is typed as an
-  expression, in the walk that WRITES it.** `resolve_expr` on an `Expr::Block`
-  reads its tail expression, and the tail may name a local the same block
-  introduced; binding them needs `&mut self` where `resolve_expr` takes `&self`.
-  The constraint walk (4.8a) does bind them — it takes `&mut self` and walks
-  statements in order — so what those locals settle is in the table before
-  anything is written, and `Calculated::new({ let a = a.read(); .. })` now types.
-  What stands is that a block asked for its type in isolation, with no walk
-  behind it, still answers from its tail alone.
 - **Ownership emission: what the model deliberately does not cover.** The
   releases the emitter writes are described in `port/ownership.md`; these are the
   places it knows it is not faithful, each reported at the site.

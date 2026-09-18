@@ -16,7 +16,7 @@
 //! The walk itself is shared with the body solver, which owns unknowns on both
 //! sides (`super::vars`), so each `Ty` variant is compared in one place.
 
-use super::def::{InferId, TraitRef, Ty};
+use super::def::{ArrayLen, InferId, TraitRef, Ty};
 use super::subst::Subst;
 
 /// Why a pattern and a concrete type could not be matched.
@@ -171,7 +171,7 @@ pub fn unify_with<U: Unknowns>(
 
         (Ty::Slice(x), Ty::Slice(y)) => unify_with(unknowns, x, y),
 
-        (Ty::Array { elem: x, len: n }, Ty::Array { elem: y, len: m }) if n == m => {
+        (Ty::Array { elem: x, len: n }, Ty::Array { elem: y, len: m }) if lengths_meet(n, m) => {
             unify_with(unknowns, x, y)
         }
 
@@ -406,5 +406,19 @@ mod tests {
             ),
             Err(Mismatch::Unresolved { .. })
         ));
+    }
+}
+
+/// Can these two array lengths be the same array?
+///
+/// A length written as a NAME is a const generic, which this engine does not
+/// carry as a value and cannot bind, so it stands for any length:
+/// `impl<T, const N: usize> IntoIterator for [T; N]` is the impl a `[u8; 16]`
+/// takes. Two lengths written as numbers are the same array only where the
+/// numbers agree.
+fn lengths_meet(a: &ArrayLen, b: &ArrayLen) -> bool {
+    match (a, b) {
+        (ArrayLen::Lit(x), ArrayLen::Lit(y)) => x == y,
+        _ => true,
     }
 }
