@@ -157,7 +157,7 @@ export class EntityLiveQuery extends Struct implements PreNotifyHook {
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const newSelection_1 = _r0.unwrap();
     try {
-      const newVersion = checkedAdd((() => { const _v = this._0.value.currentVersion; this._0.value.currentVersion = wrappingAdd(this._0.value.currentVersion, 1, 'u32'); return _v; })(), 1, 'u32');
+      const newVersion = checkedAdd((() => { const _n = 1; const _v = this._0.value.currentVersion; this._0.value.currentVersion = wrappingAdd(_v, _n, 'u32'); return _v; })(), 1, 'u32');
       this._0.value.resultset.setLoaded(false);
       this._0.value.selection.set([newSelection_1.clone(), newVersion]);
       const hasRelay = this._0.value.node.hasSubscriptionRelay();

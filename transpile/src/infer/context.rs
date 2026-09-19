@@ -478,7 +478,7 @@ impl<'a> TypeContext<'a> {
                 let elem_want = expected.and_then(|ty| expected::element_of(self.registry, ty));
                 Ok(Ty::Array {
                     elem: Box::new(self.resolve_expr_expecting(&repeat.expr, elem_want.as_ref())?),
-                    len: crate::ty::ArrayLen::Named("_".to_string()),
+                    len: crate::ty::ArrayLen::Param("_".to_string()),
                 })
             }
 

@@ -6,7 +6,7 @@
 //! don't need entries here — they pass through as-is.
 
 mod arc;
-mod atomic; // std::sync::atomic::* → the plain value it holds
+pub mod atomic; // std::sync::atomic::* → the plain value it holds
 pub(crate) mod array; // Vec<T> → T[]
 mod bytes; // Vec<u8>/[u8] → Uint8Array
 pub(crate) mod conversion; // into/from/as_ref — the conversions the runtime performs
@@ -204,6 +204,31 @@ pub fn translate_method_using(
         map::translate_entry(reg, receiver_ty, receiver, rust_method, args, at.reads_as_value)
     {
         return translated;
+    }
+
+    // `cloned` and `copied` turn a BORROW into an owned value, one clone per
+    // value. Written as a bare spread, and as the receiver itself, they handed
+    // back what the collection still owns, and a release written beside them
+    // dropped each of those values a second time.
+    if matches!(rust_method, "cloned" | "copied") && args.is_empty() {
+        if let Some(translated) =
+            crate::derives::cloning::borrow_taken_over(reg, receiver_ty, receiver, once)
+        {
+            return translated;
+        }
+    }
+
+    // An atomic the port writes no shape for reaches none of the arms below,
+    // so a call on one was written out as a method on a class nothing exports.
+    if let Some(id) = receiver_ty.peel_refs().id() {
+        let name = reg.name_of(id);
+        if atomic::is_unwritten(&name) {
+            let message = atomic::unwritten_message(&name);
+            return MethodTranslation::Refused {
+                fallback: Box::new(MethodTranslation::Expr(crate::body::hole_text(&message))),
+                message,
+            };
+        }
     }
 
     // The shape a value takes in JavaScript decides which module knows how to

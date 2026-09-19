@@ -41,7 +41,7 @@ class TestEntity extends Struct implements AbstractEntity {
   value(field: string): Value | null {
     const _t0 = this.data.value.lock();
     try {
-      return _t0.value.get(field);
+      return _t0.value.get(field)?.clone() ?? null;
     } finally {
       _t0.drop();
     }

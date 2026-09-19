@@ -1,5 +1,5 @@
 // Runs the emitted payload_taking against the real runtime. Each test below is
-// a runtime answer the parent engine (c723a60) got wrong — a leaked wrapper, a
+// a runtime answer the parent engine got wrong — a leaked wrapper, a
 // moved `Result` the caller still owned, a tuple released twice.
 
 import { expect, test } from 'bun:test';

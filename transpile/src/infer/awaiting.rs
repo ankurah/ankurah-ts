@@ -30,11 +30,7 @@ impl TypeContext<'_> {
             let Some(inner) = output else { return Ok(base) };
             return Err(self.refuse(
                 at,
-                format!(
-                    "`{}` is what this declared `async fn` answers with and is itself a future                      of `{}`; JavaScript's own `async` awaits such a value before the caller                      does, so the port has nothing to hold the outer future in",
-                    self.registry.describe(&base),
-                    self.registry.describe(&inner)
-                ),
+                assimilated_future(&self.registry.describe(&base), &self.registry.describe(&inner)),
             ));
         }
         if let Some(output) = output {
@@ -68,5 +64,30 @@ impl TypeContext<'_> {
         };
         self.sink.rewind(mark);
         found
+    }
+}
+
+/// What an `.await` on a declared `async fn` whose own result is a future says.
+///
+/// Named so the sentence is written in one place and can be read by a test: as
+/// an inline `format!` it had lost two line continuations and carried two runs
+/// of twenty-two spaces into the diagnostics.
+pub fn assimilated_future(outer: &str, inner: &str) -> String {
+    format!(
+        "`{}` is what this declared `async fn` answers with and is itself a future of `{}`; \
+         JavaScript's own `async` awaits such a value before the caller does, so the port has \
+         nothing to hold the outer future in",
+        outer, inner
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    /// A diagnostic is a sentence a person reads, so a lost line continuation
+    /// is a defect: the run of spaces it leaves behind is printed verbatim.
+    #[test]
+    fn the_refusal_for_an_assimilated_future_is_not_mangled() {
+        let message = super::assimilated_future("impl Future<Output = u64>", "u64");
+        assert!(!message.contains("  "), "the message is mangled: {message}");
     }
 }

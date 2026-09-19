@@ -324,10 +324,12 @@ fn a_borrowed_iteration_over_an_owned_local_leaves_the_locals_release_alone() {
 #[test]
 fn a_cloning_adaptor_owns_what_it_cloned() {
     let ts = body(
-        "pub fn f(cells: &Vec<Cell>) -> u32 {\n\
+        "impl Clone for Cell { fn clone(&self) -> Cell { Cell { value: self.value } } }\n\
+         pub fn f(cells: &Vec<Cell>) -> u32 {\n\
          let owned: Vec<Cell> = cells.iter().cloned().collect();\n\
          owned.len() as u32 }",
         "f",
     );
     assert!(ts.contains("dropOwned(owned)"), "the clones are released:\n{ts}");
+    assert!(ts.contains(".map((e) => e.clone())"), "and they are clones:\n{ts}");
 }

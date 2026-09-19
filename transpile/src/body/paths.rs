@@ -188,7 +188,7 @@ impl BodyTranslator<'_> {
                 written
             };
             let written = self.emitted_name(&written).unwrap_or(written);
-            // C1: a name the body holds in a runtime cell is read through it.
+            // A name the body holds in a runtime cell is read through it.
             if self.boxed.borrow().iter().any(|name| *name == written) {
                 return format!("{}.value", written);
             }
@@ -197,7 +197,7 @@ impl BodyTranslator<'_> {
             if self.names_a_fresh_const(std::slice::from_ref(&ident)) {
                 return format!("{}()", written);
             }
-            // I5: a unit struct used as a VALUE — `use crate::value::Unit as
+            // A unit struct used as a VALUE — `use crate::value::Unit as
             // OuterUnit; fn f() -> value::Unit { OuterUnit }` — is a single
             // segment, and every single segment returned here before the
             // aliasing rule below could be reached. The port writes a type
@@ -444,6 +444,19 @@ impl BodyTranslator<'_> {
             return json;
         }
         let tc = self.types.as_ref()?;
+        // A variant declared with BRACES is not a value under its own name
+        // however few fields it holds, exactly as a braced struct is not.
+        let braced = tc.borrow().braced_variant_of_emitted_enum(&segments);
+        if braced {
+            return Some(self.hole(
+                syn::spanned::Spanned::span(path),
+                format!(
+                    "`{}` is a variant declared with braces, so its name alone is a type rather \
+                     than a value",
+                    segments.join("::")
+                ),
+            ));
+        }
         let (owner, variant) = tc.borrow().unit_variant_of_emitted_enum(&segments)?;
         Some(format!("new {}('{}', {{}})", owner, variant))
     }

@@ -89,7 +89,13 @@ pub fn translate_macro(mac: &syn::Macro, t: &BodyTranslator) -> String {
         "println" | "eprintln" | "print" | "eprint" => {
             format!("console.log({})", formatted(&mac.tokens, t, at, &name))
         }
-        "dbg" => format!("console.log({})", mac.tokens),
+        // `dbg!` ANSWERS the value it prints. `console.log` answers undefined,
+        // and the operand went out as raw Rust tokens beside it.
+        "dbg" => t.hole(
+            at,
+            "`dbg!` answers the value it prints, and the port has no form that both prints a \
+             value and answers it",
+        ),
         // `write!(f, "..")` puts its text into the formatter the caller handed
         // it, and the port's `Display` returns that text, so the formatter is
         // dropped and the text is the value.
@@ -134,6 +140,16 @@ pub fn translate_macro(mac: &syn::Macro, t: &BodyTranslator) -> String {
         // A macro cannot be a function, so the arms stay with the emitter and
         // only the arbitration goes to the runtime.
         "select" => translate_select(&mac.tokens, t),
+        // Rust evaluates a panic's arguments before it panics; the port writes
+        // the throw alone, so values written beside the message are never read.
+        "todo" | "unimplemented" if carries_operands(&mac.tokens) => t.hole(
+            at,
+            format!(
+                "`{}!` is written here with values beside its message, and the port writes the \
+                 throw alone, so nothing evaluates them",
+                name
+            ),
+        ),
         "todo" => "throw new Error('TODO')".to_string(),
         "unimplemented" => "throw new Error('unimplemented')".to_string(),
         "matches" => items::matches_macro(&mac.tokens, t).unwrap_or_else(|| {
@@ -346,6 +362,16 @@ pub fn vec_macro_elements(mac: &syn::Macro) -> Vec<Expr> {
         return vec![*repeat.expr];
     }
     parse_exprs_from_tokens(&mac.tokens).unwrap_or_default()
+}
+
+/// Does this `todo!` / `unimplemented!` carry values beside its message? Rust
+/// evaluates them before it panics, and tokens the engine cannot read may carry
+/// anything, so they are not read as carrying nothing.
+fn carries_operands(tokens: &TokenStream) -> bool {
+    match parse_exprs_from_tokens(tokens) {
+        Ok(args) => args.len() > 1,
+        Err(_) => !tokens.is_empty(),
+    }
 }
 
 fn parse_exprs_from_tokens(tokens: &TokenStream) -> Result<Vec<Expr>, syn::Error> {

@@ -1,5 +1,5 @@
 // Runs the emitted negation_and_rest against the real runtime. Three answers
-// the parent engine (c723a60) got wrong: `-i32::MIN` and `-i64::MIN` came back
+// the parent engine got wrong: `-i32::MIN` and `-i64::MIN` came back
 // as values those widths cannot hold, and `Variant(..)` threw.
 
 import { expect, test } from 'bun:test';

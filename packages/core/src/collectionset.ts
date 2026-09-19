@@ -78,7 +78,7 @@ export class CollectionSet<SE extends StorageEngine> extends Struct {
   async listCollections(): Promise<Result<CollectionId[], RetrievalError>> {
     const memoryCollections = await this._0.value.collections.read();
     try {
-      return Result.Ok([...memoryCollections.value.keys()]);
+      return Result.Ok([...memoryCollections.value.keys()].map((e) => e.clone()));
     } finally {
       memoryCollections.drop();
     }

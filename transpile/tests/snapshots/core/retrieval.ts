@@ -293,7 +293,7 @@ export class EphemeralNodeRetriever<SE extends StorageEngine, PA extends PolicyA
           if (_r4.isErr()) return Result.Err(_r4.unwrapErr());
           const collection = _r4.unwrap();
           try {
-            const _r5 = await collection.deref().value.getEvents([...[...eventIds_1]]);
+            const _r5 = await collection.deref().value.getEvents([...[...eventIds_1]].map((e) => e.clone()));
             if (_r5.isErr()) return Result.Err(_r5.unwrapErr());
             const _seq8 = _r5.unwrap();
             let _at9 = 0;

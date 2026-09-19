@@ -16,7 +16,7 @@ export class Counter extends Struct {
   }
 
   bump(): number {
-    return (() => { const _v = this.hits; this.hits = wrappingAdd(this.hits, 1, 'usize'); return _v; })();
+    return (() => { const _n = 1; const _v = this.hits; this.hits = wrappingAdd(_v, _n, 'usize'); return _v; })();
   }
 
   read(): number {
@@ -24,11 +24,11 @@ export class Counter extends Struct {
   }
 
   close(): boolean {
-    return (() => { const _v = this.alive; this.alive = false; return _v; })();
+    return (() => { const _n = false; const _v = this.alive; this.alive = _n; return _v; })();
   }
 
   claim(): boolean {
-    const _t0 = (() => { const _v = this.alive; if (_v === true) { this.alive = false; return Result.Ok(_v); } return Result.Err(_v); })();
+    const _t0 = (() => { const _want = true; const _next = false; const _v = this.alive; if (_v === _want) { this.alive = _next; return Result.Ok(_v); } return Result.Err(_v); })();
     try {
       return _t0.isOk();
     } finally {

@@ -133,7 +133,7 @@ pub struct StructInfo {
     /// rendered TypeScript and answers nothing about what a bound requires:
     /// `Holder<I: Iterator<Item = Token>>` stores a CURSOR in its field, and
     /// without the bound neither the field's spelling nor a construction site
-    /// could say so (FF4).
+    /// could say so.
     pub syn_generics: syn::Generics,
     /// `HashMap<K, V, S = RandomState>` — what a parameter falls back to when
     /// the use site leaves it unwritten, positionally alongside `type_params`.
@@ -224,6 +224,9 @@ pub struct VariantInfo {
     pub error_text: Option<ErrorText>,
     /// Where the variant's name is written.
     pub span: proc_macro2::Span,
+    /// How the variant lets its name be written, as a struct declaration does.
+    /// `Braced {}` carries no fields and is still not a value.
+    pub constructor: Constructor,
 }
 
 #[derive(Debug)]

@@ -94,7 +94,7 @@ fn tuples_arrays_slices_str_unit_and_never() {
         c.ty_in("lib.rs", "[T; N]", &["T"]).unwrap(),
         Ty::Array {
             elem: Box::new(Ty::Param("T".into())),
-            len: ArrayLen::Named("N".into())
+            len: ArrayLen::Param("N".into())
         }
     );
     assert_eq!(c.ty("lib.rs", "_"), Ty::Infer);

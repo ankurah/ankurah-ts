@@ -60,6 +60,10 @@ pub enum TypeKind {
 pub struct VariantDef {
     pub name: String,
     pub fields: Vec<(String, Ty)>,
+    /// How the variant lets its name be written. A `Braced {}` variant carries
+    /// no fields and is still not a value, exactly as an empty braced struct
+    /// is not one.
+    pub constructor: crate::types::Constructor,
 }
 
 /// What `declare_type` needs. The crate's own structs and enums, the system

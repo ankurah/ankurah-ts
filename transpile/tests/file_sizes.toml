@@ -24,7 +24,7 @@
 "src/main.rs" = 1230
 "src/match_expr.rs" = 721
 "src/ownership/tests.rs" = 1203
-"src/registry/build.rs" = 882
+"src/registry/build.rs" = 879
 "src/registry/engine_tests.rs" = 1289
 "src/registry/method.rs" = 645
 "src/registry/method_tests.rs" = 726

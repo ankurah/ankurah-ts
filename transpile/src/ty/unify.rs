@@ -407,18 +407,38 @@ mod tests {
             Err(Mismatch::Unresolved { .. })
         ));
     }
+
+    /// A const generic parameter stands for any length; every other length is
+    /// ONE length. Read as a parameter, `[T; FOUR]` was the impl an
+    /// eight-element array took, and its body answered 4 for eight elements.
+    #[test]
+    fn only_a_const_generic_length_stands_for_any_length() {
+        use super::lengths_meet;
+        use crate::ty::ArrayLen;
+        assert!(lengths_meet(&ArrayLen::Param("N".into()), &ArrayLen::Lit(8)));
+        assert!(lengths_meet(&ArrayLen::Lit(8), &ArrayLen::Param("N".into())));
+        assert!(lengths_meet(&ArrayLen::Lit(8), &ArrayLen::Lit(8)));
+        assert!(!lengths_meet(&ArrayLen::Lit(4), &ArrayLen::Lit(8)));
+        assert!(lengths_meet(&ArrayLen::Const("FOUR".into()), &ArrayLen::Const("FOUR".into())));
+        assert!(!lengths_meet(&ArrayLen::Const("FOUR".into()), &ArrayLen::Const("EIGHT".into())));
+        assert!(!lengths_meet(&ArrayLen::Const("FOUR".into()), &ArrayLen::Lit(8)));
+    }
 }
 
 /// Can these two array lengths be the same array?
 ///
-/// A length written as a NAME is a const generic, which this engine does not
-/// carry as a value and cannot bind, so it stands for any length:
-/// `impl<T, const N: usize> IntoIterator for [T; N]` is the impl a `[u8; 16]`
-/// takes. Two lengths written as numbers are the same array only where the
-/// numbers agree.
+/// A const generic parameter stands for any length, because the impl that
+/// declares it holds for every one: `impl<T, const N: usize> IntoIterator for
+/// [T; N]` is the impl a `[u8; 16]` takes. Every other length is ONE length, so
+/// two of them meet only where the engine can see that they are the same one.
 fn lengths_meet(a: &ArrayLen, b: &ArrayLen) -> bool {
     match (a, b) {
+        (ArrayLen::Param(_), _) | (_, ArrayLen::Param(_)) => true,
         (ArrayLen::Lit(x), ArrayLen::Lit(y)) => x == y,
-        _ => true,
+        (ArrayLen::Const(x), ArrayLen::Const(y)) => x == y,
+        // A constant the engine did not read as a number is not a length it can
+        // compare with one, and matching anyway answered `[T; FOUR]`'s method
+        // for an eight-element array, which rustc rejects outright.
+        _ => false,
     }
 }

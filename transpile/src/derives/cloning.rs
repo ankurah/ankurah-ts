@@ -34,6 +34,87 @@ pub(crate) fn clone_within(reg: &TypeRegistry, place: &str, ty: Option<&Ty>) -> 
     }
 }
 
+/// Does the port write a `clone()` for this type, where a copy of it asks for
+/// one?
+///
+/// A copy the port writes out — a spread, a `new Uint8Array`, a `map` — asks
+/// nothing of the value. One that is only `place.clone()` does, and the
+/// registry is what says whether the type has it.
+pub(crate) fn has_clone(reg: &TypeRegistry, ty: &Ty) -> bool {
+    if clone_within(reg, "$", Some(ty)) != "$.clone()" {
+        return true;
+    }
+    reg.system_type(crate::registry::CLONE_PATH).is_some_and(|clone| {
+        crate::registry::Probe::new(reg, reg.crate_root()).implements(ty, clone)
+    })
+}
+
+/// What `cloned` and `copied` answer with over a sequence or an option, or
+/// nothing where the engine cannot name what the receiver holds.
+///
+/// Both adaptors turn a BORROW into an owned value, which for a payload with
+/// drop glue means one clone per value. Written as a bare spread, and as the
+/// receiver itself, they handed back what the collection still owns, and the
+/// release the caller writes beside them dropped each value a second time.
+pub(crate) fn borrow_taken_over(
+    reg: &TypeRegistry,
+    receiver_ty: &Ty,
+    receiver: &str,
+    once: &crate::native_types::nullable::Once<'_>,
+) -> Option<crate::native_types::MethodTranslation> {
+    let shape = js_shape(reg, receiver_ty);
+    // Through the borrow Rust hands out: both adaptors take a sequence or an
+    // option OF `&T` and answer one of `T`, and `&T` is `Clone` whatever `T`
+    // is, so asking about the borrow answered yes for a payload with no clone
+    // at all.
+    let payload = match &shape {
+        JsShape::Array(payload) | JsShape::Nullable(payload) => payload.peel_refs().clone(),
+        _ => return None,
+    };
+    // A payload the solve did not settle is one nothing is known about, and
+    // the site is already reported for being untyped.
+    if payload.mentions_any_var() {
+        return None;
+    }
+    // A payload with NO drop glue keeps the text this has always written:
+    // nothing releases such a value, so nothing releases it twice, and a copy
+    // of it would only be churn.
+    let probe = crate::registry::Probe::new(reg, reg.crate_root());
+    if !crate::ownership::glue::drops_of(&probe, &payload).is_droppable() {
+        return None;
+    }
+    if !has_clone(reg, &payload) {
+        let message = format!(
+            "this hands back an owned value and `{}` has no `clone()` in the port, so what it \
+             hands back would be the value the original still owns",
+            crate::name_map::map_ty(reg, &payload)
+        );
+        return Some(crate::native_types::MethodTranslation::Refused {
+            fallback: Box::new(crate::native_types::MethodTranslation::Expr(
+                crate::body::hole_text(&message),
+            )),
+            message,
+        });
+    }
+    let written = match shape {
+        // `values()` and `iter()` answer an ITERATOR here, which has no `map`,
+        // so the spread `cloned` has always written comes first.
+        JsShape::Array(_) => {
+            format!("[...{}].map((e) => {})", receiver, clone_within(reg, "e", Some(&payload)))
+        }
+        // The payload's copy behind the null guard. `x?.clone() ?? null` reads
+        // the place once; every other copy stands behind a `!= null` test that
+        // reads it again, so that place is named once before the guard.
+        _ => {
+            let reads_once = clone_within(reg, "$", Some(&payload)) == "$.clone()";
+            let place =
+                if reads_once { receiver.to_string() } else { (once.bind_receiver)(receiver) };
+            clone_within(reg, &place, Some(receiver_ty))
+        }
+    };
+    Some(crate::native_types::MethodTranslation::Expr(written))
+}
+
 /// The same, told how deep inside a container it is, so a `map` inside a `map`
 /// names its own element.
 fn clone_at(reg: &TypeRegistry, place: &str, ty: &Ty, depth: usize) -> String {
@@ -274,5 +355,72 @@ pub struct Id(pub u32);\n\
     fn a_field_with_no_resolved_type_is_copied_at_run_time() {
         let f = Fixture::build(&[("lib.rs", PRELUDE)]);
         assert_eq!(clone_within(&f.reg, "this.x", None), "derivedClone(this.x)");
+    }
+}
+
+#[cfg(test)]
+mod adaptor_tests {
+    use crate::testing::Fixture;
+
+    const LISTENER: &str = "use std::collections::HashMap;\n\
+         pub struct Listener { pub id: u64 }\n\
+         impl Drop for Listener { fn drop(&mut self) {} }\n";
+
+    const CLONE: &str =
+        "impl Clone for Listener { fn clone(&self) -> Listener { Listener { id: self.id } } }\n";
+
+    /// Both adaptors hand the caller its OWN value, so a payload with drop glue
+    /// is copied: written as a bare spread and as the receiver itself, they
+    /// handed back what the collection still owns.
+    #[test]
+    fn a_borrow_taken_over_copies_a_payload_with_drop_glue() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            &format!(
+                "{LISTENER}{CLONE}\
+                 pub fn every(m: &HashMap<u64, Listener>) -> Vec<Listener> \
+                 {{ m.values().cloned().collect::<Vec<_>>() }}\n\
+                 pub fn one(m: &HashMap<u64, Listener>, k: u64) -> Option<Listener> \
+                 {{ m.get(&k).cloned() }}"
+            ),
+        )]);
+        assert_eq!(f.translated_method("lib.rs", "every").trim(), "return [...m.values()].map((e) => e.clone());");
+        assert_eq!(f.translated_method("lib.rs", "one").trim(), "return m.get(k)?.clone() ?? null;");
+    }
+
+    /// A payload with no drop glue keeps the text this has always written:
+    /// nothing releases such a value, so a copy of it would only be churn.
+    #[test]
+    fn a_payload_with_no_drop_glue_is_not_copied() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            "use std::collections::HashMap;\n\
+             pub fn every(m: &HashMap<u64, u64>) -> Vec<u64> \
+             { m.values().cloned().collect::<Vec<_>>() }\n\
+             pub fn one(m: &HashMap<u64, u64>, k: u64) -> Option<u64> { m.get(&k).copied() }",
+        )]);
+        assert_eq!(f.translated_method("lib.rs", "every").trim(), "return [...m.values()];");
+        assert_eq!(f.translated_method("lib.rs", "one").trim(), "return m.get(k);");
+    }
+
+    /// And a payload the port has no `clone()` for is a hole: the copy would be
+    /// the value the original still owns, which a release then drops twice.
+    #[test]
+    fn a_payload_with_no_clone_is_a_hole() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            &format!(
+                "{LISTENER}\
+                 pub fn every(m: &HashMap<u64, Listener>) -> Vec<Listener> \
+                 {{ m.values().cloned().collect::<Vec<_>>() }}"
+            ),
+        )]);
+        let ts = f.translated_method("lib.rs", "every");
+        assert!(ts.contains("unsupported("), "the copy cannot be written, so the site is a hole:\n{ts}");
+        assert!(
+            f.messages().iter().any(|m| m.contains("has no `clone()` in the port")),
+            "and it says so: {:?}",
+            f.messages()
+        );
     }
 }

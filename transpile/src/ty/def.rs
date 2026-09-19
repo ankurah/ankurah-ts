@@ -172,8 +172,15 @@ impl Prim {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ArrayLen {
     Lit(u64),
-    /// A const generic parameter or a named constant, e.g. `[T; N]`.
-    Named(String),
+    /// A const generic parameter, e.g. `N` in `impl<const N: usize> Tr for [T; N]`.
+    /// The engine carries no value for one, and the impl holds for every length,
+    /// so it stands for any.
+    Param(String),
+    /// A named constant, e.g. `LEN` in `const LEN: usize = 4; [T; LEN]`. It is
+    /// ONE length, whatever it is, so two of them are the same array only where
+    /// the names agree. Read as a const generic it made
+    /// `impl<T> Tr for [T; FOUR]` the impl an eight-element array takes.
+    Const(String),
 }
 
 /// A trait named in a bound or a trait object, with its arguments and any

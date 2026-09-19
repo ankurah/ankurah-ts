@@ -117,6 +117,11 @@ impl BodyTranslator<'_> {
         // `Vec` is its own class, and `Vec::new()` on it is `Vec.new()`, not a
         // JavaScript array literal.
         if !self.names_crate_type(callee) {
+            // An atomic the port writes no shape for: `AtomicI64::new(1)` was
+            // written as `AtomicI64.new(1n)`, a class nothing exports.
+            if let Some(owner) = native_types::atomic::unwritten_owner(func) {
+                return self.hole(span, native_types::atomic::unwritten_message(owner));
+            }
             if let Some(result) = native_types::translate_static_call(func, args) {
                 // A `BTreeMap` keeps its keys in order and the port has no
                 // ordered container: the runtime's `HashMap` hashes its keys

@@ -36,7 +36,7 @@ impl BodyTranslator<'_> {
         // parameter handed away inside a branch needs its drop flag registered
         // by the time the branch that sets it is translated.
         self.note_once_closures(&block.stmts);
-        // C1: a local this body hands out as `&mut` and whose type the port
+        // A local this body hands out as `&mut` and whose type the port
         // writes as a JavaScript VALUE has to live in a cell, because the
         // callee's writes have nowhere else to go. Read before anything is
         // translated, so the `let` that introduces it declares the cell.
@@ -292,7 +292,7 @@ impl BodyTranslator<'_> {
         // them on the refusal path, where the cleanup releases what the callee
         // now owns.
         //
-        // W3/X6: which of the two it is comes from the LOWERING, which knows
+        // Which of the two it is comes from the LOWERING, which knows
         // when it is inside a callable's body. Read off the rendered text — an
         // arrow before the first `unsupported(` — `'=>'.length` in a string
         // suppressed the cleanup of a statement that had really refused, and an
@@ -481,6 +481,21 @@ impl BodyTranslator<'_> {
                 }
             }
             syn::Stmt::Item(syn::Item::Const(c)) => self.body_const(c),
+            // A function declared inside a body has nowhere to go in the
+            // emission and was dropped: `fn f() { fn h(n: u64) -> u64 { n + 1 }
+            // h(4) }` emitted `return h(4)` with `h` defined nowhere.
+            syn::Stmt::Item(syn::Item::Fn(nested)) => format!(
+                "{};\n",
+                self.hole(
+                    nested.sig.ident.span(),
+                    format!(
+                        "`{}` is a function declared inside this body, and the port writes a \
+                         body's own items nowhere, so a call to it reaches a name that is not \
+                         defined",
+                        nested.sig.ident
+                    )
+                )
+            ),
             syn::Stmt::Item(_) => String::new(),
             // A macro written with a semicolon is `Stmt::Macro`, so a
             // `write!(f, ..);` never reached the append above and was emitted

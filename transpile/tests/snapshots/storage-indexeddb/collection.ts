@@ -157,7 +157,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
 
   async setState(state: Attested<EntityState>): Promise<Result<boolean, MutationError>> {
     try {
-      (() => { const _v = this.invocationCount; this.invocationCount = wrappingAdd(this.invocationCount, 1, 'usize'); return _v; })();
+      (() => { const _n = 1; const _v = this.invocationCount; this.invocationCount = wrappingAdd(_v, _n, 'usize'); return _v; })();
       const _lock = await this.mutex.lock();
       try {
         const dbConnection = await this.db.getConnection();
@@ -310,7 +310,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
   }
 
   async fetchStates(selection: Selection): Promise<Result<Attested<EntityState>[], RetrievalError>> {
-    const _invocation = (() => { const _v = this.invocationCount; this.invocationCount = wrappingAdd(this.invocationCount, 1, 'usize'); return _v; })();
+    const _invocation = (() => { const _n = 1; const _v = this.invocationCount; this.invocationCount = wrappingAdd(_v, _n, 'usize'); return _v; })();
     const _lock = await this.mutex.lock();
     try {
       const amendedSelection = addCollection(selection, this.collectionId);
@@ -398,7 +398,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
   }
 
   async addEvent(attestedEvent: Attested<Event>): Promise<Result<boolean, MutationError>> {
-    const invocation = (() => { const _v = this.invocationCount; this.invocationCount = wrappingAdd(this.invocationCount, 1, 'usize'); return _v; })();
+    const invocation = (() => { const _n = 1; const _v = this.invocationCount; this.invocationCount = wrappingAdd(_v, _n, 'usize'); return _v; })();
     tracing.debug(`IndexedDBBucket(${this.collectionId}).add_event(${invocation})`);
     const _lock = await this.mutex.lock();
     try {

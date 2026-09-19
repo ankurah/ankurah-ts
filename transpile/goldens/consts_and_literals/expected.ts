@@ -69,7 +69,7 @@ export function movedOrigin(): number {
 }
 
 export function bump(): number {
-  return (() => { const _v = COUNTER; COUNTER = wrappingAdd(COUNTER, 1, 'usize'); return _v; })();
+  return (() => { const _n = 1; const _v = COUNTER; COUNTER = wrappingAdd(_v, _n, 'usize'); return _v; })();
 }
 
 export function arm(ready: boolean): boolean {
@@ -92,7 +92,7 @@ export function ordered(): number {
 }
 
 export function wrapAround(): number {
-  return (() => { const _v = WRAPS; WRAPS = wrappingAdd(WRAPS, 1, 'u32'); return _v; })();
+  return (() => { const _n = 1; const _v = WRAPS; WRAPS = wrappingAdd(_v, _n, 'u32'); return _v; })();
 }
 
 export function epsilonNear(v: number): number {

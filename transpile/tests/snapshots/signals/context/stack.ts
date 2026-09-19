@@ -80,7 +80,7 @@ export function current(): Arc<Observer> | null {
   return OBSERVER_STACK.with((stack) => {
     const _t0 = stack.borrow();
     try {
-      return iterLast(_t0.value);
+      return iterLast(_t0.value)?.clone() ?? null;
     } finally {
       _t0.drop();
     }

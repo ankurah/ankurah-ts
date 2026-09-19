@@ -141,7 +141,7 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
       {
         const subscriptions = this._0.value.subscriptions.lock();
         try {
-          const _m0 = subscriptions.value.get(subscriptionId);
+          const _m0 = subscriptions.value.get(subscriptionId)?.clone() ?? null;
           const _m1 = new SubscriptionError('SubscriptionNotFound', {});
           const _r2 = (_m0 != null ? (_m1.drop(), Result.Ok(_m0!)) : Result.Err(_m1));
           if (_r2.isErr()) return { $jump: 'return', $value: Result.Err(_r2.unwrapErr()) };
@@ -186,7 +186,7 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
     const subscription = (() => {
       const subscriptions = this._0.value.subscriptions.lock();
       try {
-        return subscriptions.value.get(subscriptionId);
+        return subscriptions.value.get(subscriptionId)?.clone() ?? null;
       } finally {
         subscriptions.drop();
       }
@@ -248,7 +248,7 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
               {
                 const subscriptions = this._0.value.subscriptions.lock();
                 try {
-                  const _m1 = subscriptions.value.get(subscriptionId);
+                  const _m1 = subscriptions.value.get(subscriptionId)?.clone() ?? null;
                   const _r2 = (_m1 != null ? Result.Ok(_m1!) : Result.Err((() => AnyhowError.msg(`Subscription ${subscriptionId.debug()} not found`))()));
                   if (_r2.isErr()) return { $jump: 'return', $value: Result.Err(_r2.unwrapErr()) };
                   return _r2.unwrap();
@@ -325,7 +325,7 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
           {
             const subscriptions = this._0.value.subscriptions.lock();
             try {
-              const _m1 = subscriptions.value.get(subscriptionId);
+              const _m1 = subscriptions.value.get(subscriptionId)?.clone() ?? null;
               const _r2 = (_m1 != null ? Result.Ok(_m1!) : Result.Err((() => AnyhowError.msg(`Subscription ${subscriptionId.debug()} not found`))()));
               if (_r2.isErr()) return { $jump: 'return', $value: Result.Err(_r2.unwrapErr()) };
               return _r2.unwrap();
@@ -463,7 +463,7 @@ export class Reactor<E extends AbstractEntity & Filterable = Entity, Ev extends 
           {
             const subscriptions = this._0.value.subscriptions.lock();
             try {
-              const _m0 = subscriptions.value.get(subscriptionId);
+              const _m0 = subscriptions.value.get(subscriptionId)?.clone() ?? null;
               const _r1 = (_m0 != null ? Result.Ok(_m0!) : Result.Err((() => AnyhowError.msg(`Subscription ${subscriptionId.debug()} not found`))()));
               if (_r1.isErr()) return { $jump: 'return', $value: Result.Err(_r1.unwrapErr()) };
               return _r1.unwrap();

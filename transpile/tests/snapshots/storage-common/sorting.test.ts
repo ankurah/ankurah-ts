@@ -103,7 +103,7 @@ class TestItem extends Struct implements Filterable {
   }
 
   value(property: string): Value | null {
-    return this.values.get(property);
+    return this.values.get(property)?.clone() ?? null;
   }
 
   equals(other: TestItem): boolean {

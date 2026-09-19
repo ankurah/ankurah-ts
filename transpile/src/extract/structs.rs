@@ -2,7 +2,17 @@
 
 use super::{extract_derives, extract_fields, extract_generics, expanded_attrs, has_serde_flag,
     is_public, type_param_defaults, type_param_names, visibility};
-use crate::types::StructInfo;
+use crate::types::{Constructor, StructInfo};
+
+/// How a declaration lets its name be WRITTEN, which decides whether that name
+/// alone is a value. A struct and an enum variant take the same three forms.
+pub(crate) fn constructor_of(fields: &syn::Fields) -> Constructor {
+    match fields {
+        syn::Fields::Named(_) => Constructor::Braced,
+        syn::Fields::Unnamed(_) => Constructor::Tuple,
+        syn::Fields::Unit => Constructor::Unit,
+    }
+}
 
 pub(super) fn extract_struct(s: &syn::ItemStruct, features: Option<&crate::cfg::CfgFeatures>) -> StructInfo {
     let attrs = expanded_attrs(&s.attrs, features, s.ident.span());
@@ -17,11 +27,7 @@ pub(super) fn extract_struct(s: &syn::ItemStruct, features: Option<&crate::cfg::
         param_defaults: type_param_defaults(&s.generics),
         derives: extract_derives(&attrs),
         serde_transparent: has_serde_flag(&attrs, "transparent"),
-        constructor: match s.fields {
-            syn::Fields::Named(_) => crate::types::Constructor::Braced,
-            syn::Fields::Unnamed(_) => crate::types::Constructor::Tuple,
-            syn::Fields::Unit => crate::types::Constructor::Unit,
-        },
+        constructor: constructor_of(&s.fields),
         span: s.ident.span(),
     }
 }

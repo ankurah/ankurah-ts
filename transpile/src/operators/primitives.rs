@@ -120,7 +120,7 @@ impl BodyTranslator<'_> {
             if shift && !self.count_fits(left_ty, right, span) {
                 return None;
             }
-            if let Some(written) = bitwise(op, left_ty, left, right) {
+            if let Some(written) = bit_operation(op.native, left_ty, left, right) {
                 return Some(written);
             }
             // A compound bit operation is the operation and then the
@@ -128,8 +128,7 @@ impl BodyTranslator<'_> {
             // expression form gets: `value <<= 31` on a `u32` answered
             // -2147483648, and `value <<= 7` on a `u8` answered 256.
             if let Some(plain) = compound_of(op.native) {
-                let expression = Operator { native: plain, ..op.clone() };
-                if let Some(written) = bitwise(&expression, left_ty, left, right) {
+                if let Some(written) = bit_operation(plain, left_ty, left, right) {
                     return Some(self.place_assignment(left, &written, span));
                 }
             }
@@ -208,21 +207,19 @@ fn bigint_count(right: &str, right_ty: Prim) -> String {
     if is_bigint(right_ty) { text.to_string() } else { format!("BigInt({})", text) }
 }
 
-/// The bit operators, which JavaScript performs on a *signed* 32-bit number
-/// whatever it was given.
+/// One bit operation, written as JavaScript performs it and brought back into
+/// the type's range with `cast::wrap`.
 ///
-/// `x >> 1` on a `u32` above 2^31 is negative in JavaScript and positive in
-/// Rust, because JavaScript's `>>` keeps the sign bit; `>>>` is the one that
-/// does what Rust's `>>` on an unsigned type does. And a result outside the
-/// type's range — `1u32 << 31`, `!0u16 & 0xFFFF` — has to come back inside it,
-/// which is what `cast::wrap` writes.
-fn bitwise(op: &Operator, left_ty: Prim, left: &str, right: &str) -> Option<String> {
+/// JavaScript's operators work on a *signed* 32-bit number: `x >> 1` on a `u32`
+/// above 2^31 is negative where Rust's is positive, so an unsigned `>>` is
+/// written `>>>`, and a result outside the range — `1u32 << 31` — comes back in.
+pub(crate) fn bit_operation(native: &str, left_ty: Prim, left: &str, right: &str) -> Option<String> {
     let unsigned = matches!(left_ty, Prim::U8 | Prim::U16 | Prim::U32 | Prim::Usize);
-    let native = match (op.native, unsigned) {
+    let native = match (native, unsigned) {
         // Rust's `>>` on an unsigned type shifts zeroes in; JavaScript's `>>`
         // shifts the sign bit in.
         (">>", true) => ">>>",
-        ("&" | "|" | "^" | "<<" | ">>", _) => op.native,
+        ("&" | "|" | "^" | "<<" | ">>", _) => native,
         _ => return None,
     };
     // The operation is parenthesised before it is wrapped: `a & b >>> 0` is

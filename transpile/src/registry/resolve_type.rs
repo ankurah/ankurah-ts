@@ -122,8 +122,17 @@ fn array_len(len: &syn::Expr, env: &TypeEnv) -> Result<ArrayLen, Diag> {
             .base10_parse::<u64>()
             .map(ArrayLen::Lit)
             .map_err(|_| env.refuse(len.span(), "array length is not a plain integer")),
+        // A name that resolves to a declared value is a CONSTANT — one length,
+        // whatever it is. A name that resolves to nothing is the const generic
+        // of the item this type was written in, which the engine carries no
+        // value for and which holds for every length.
         syn::Expr::Path(path) if path.path.segments.len() == 1 => {
-            Ok(ArrayLen::Named(path.path.segments[0].ident.to_string()))
+            let name = path.path.segments[0].ident.to_string();
+            let declared = matches!(
+                env.reg.lookup(env.module, crate::registry::Ns::Value, std::slice::from_ref(&name)),
+                Ok(Some(crate::registry::Def::Value(_)))
+            );
+            Ok(if declared { ArrayLen::Const(name) } else { ArrayLen::Param(name) })
         }
         other => Err(env.refuse(
             other.span(),

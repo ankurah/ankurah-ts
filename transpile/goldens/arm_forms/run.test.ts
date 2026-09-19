@@ -1,5 +1,5 @@
 // Runs the emitted arm_forms against the real runtime. Each test below is an
-// answer the parent engine (c723a60) got wrong, and every one of the three
+// answer the parent engine got wrong, and every one of the three
 // wrong answers came from reading rendered TypeScript back instead of carrying
 // what the lowering wrote (K2).
 

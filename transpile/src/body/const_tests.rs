@@ -16,6 +16,15 @@ fn emitted(src: &str) -> String {
 
 const POINT: &str = "pub struct Point { pub x: u32, pub y: String }\n";
 
+/// The single statement a one-line function body holds, so an assertion reads
+/// the whole of what was emitted rather than a fragment that would still match
+/// inside a longer and wrong line.
+fn body_of(ts: &str, function: &str) -> String {
+    let mut lines = ts.lines().skip_while(|line| !line.contains(&format!("function {function}(")));
+    lines.next().unwrap_or_else(|| panic!("no `{function}` in:\n{ts}"));
+    lines.next().unwrap_or_else(|| panic!("`{function}` has no body in:\n{ts}")).trim().to_string()
+}
+
 /// #5: a non-`Copy` const is a fresh value at each use, so the emitted name is
 /// a function the use calls.
 #[test]
@@ -61,13 +70,14 @@ fn a_static_with_interior_mutability_is_reassignable() {
          pub fn bump() -> usize { COUNTER.fetch_add(1, Ordering::SeqCst) }",
     );
     assert!(ts.contains("export let COUNTER: number = 0;"), "{ts}");
-    // PREMISE CHANGED 2026-09-05 (fixpass5 item 11, K): this line used to read
-    // `COUNTER += 1`. Rust's atomics WRAP at their width whatever the build's
-    // debug assertions say — `AtomicU32::MAX.fetch_add(1)` stores `0` — and a
-    // `+=` on a `number` went on counting, so the port and Rust disagreed from
-    // the first overflow on. A `static mut` beside it already went through the
-    // checked helper, so the two spellings of one idea disagreed too.
-    assert!(ts.contains("COUNTER = wrappingAdd(COUNTER, 1, 'usize')"), "{ts}");
+    // Rust's atomics WRAP at their width whatever the build's debug assertions
+    // say — `AtomicU32::MAX.fetch_add(1)` stores `0` — and a `+=` on a `number`
+    // went on counting, so the port and Rust disagreed from the first overflow.
+    assert_eq!(
+        body_of(&ts, "bump"),
+        "return (() => { const _n = 1; const _v = COUNTER; \
+         COUNTER = wrappingAdd(_v, _n, 'usize'); return _v; })();"
+    );
 }
 
 /// The atomic's own width is what the wrap is taken at: an `AtomicU32` wraps at
@@ -82,8 +92,16 @@ fn an_atomic_wraps_at_its_own_width() {
          pub fn b() -> u32 { SMALL.fetch_add(1, Ordering::SeqCst) }\n\
          pub fn c() -> usize { SIZE.fetch_sub(1, Ordering::SeqCst) }",
     );
-    assert!(ts.contains("SMALL = wrappingAdd(SMALL, 1, 'u32')"), "{ts}");
-    assert!(ts.contains("SIZE = wrappingSub(SIZE, 1, 'usize')"), "{ts}");
+    assert_eq!(
+        body_of(&ts, "b"),
+        "return (() => { const _n = 1; const _v = SMALL; \
+         SMALL = wrappingAdd(_v, _n, 'u32'); return _v; })();"
+    );
+    assert_eq!(
+        body_of(&ts, "c"),
+        "return (() => { const _n = 1; const _v = SIZE; \
+         SIZE = wrappingSub(_v, _n, 'usize'); return _v; })();"
+    );
 }
 
 /// `AtomicU64` is the one atomic whose TypeScript spelling and whose Rust width

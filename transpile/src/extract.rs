@@ -509,7 +509,6 @@ fn extract_enum(e: &syn::ItemEnum, features: Option<&crate::cfg::CfgFeatures>) -
     // A variant this build leaves out is not a variant: its key would stand in
     // the emitted union and in every match the derive writes.
     let variants = e.variants.iter().filter(|v| !is_skipped_cfg_with(&v.attrs, features)).map(|v| {
-        let is_serde_other = has_serde_flag(&v.attrs, "other");
         // `#[serde(with = "..")]` sits on the VARIANT, not on the field
         // inside it: `#[serde(with = "json_as_bytes")] Json(serde_json::Value)`.
         // The codec asks the field, so the variant's answer stands in for it.
@@ -522,9 +521,10 @@ fn extract_enum(e: &syn::ItemEnum, features: Option<&crate::cfg::CfgFeatures>) -
         VariantInfo {
             name: v.ident.to_string(),
             fields,
-            is_serde_other,
+            is_serde_other: has_serde_flag(&v.attrs, "other"),
             error_text: error_attribute(&v.attrs),
             span: v.ident.span(),
+            constructor: structs::constructor_of(&v.fields),
         }
     }).collect();
 

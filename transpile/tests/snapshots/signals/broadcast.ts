@@ -58,7 +58,7 @@ export class Broadcast<T extends Clone = void> extends Struct {
     const subscribers = (() => {
       const listeners = this._0.value.listeners.read();
       try {
-        return [...listeners.value.values()];
+        return [...listeners.value.values()].map((e) => e.clone());
       } finally {
         listeners.drop();
       }
@@ -145,7 +145,7 @@ export class Ref<T> extends Struct {
   }
 
   listen<L>(listener: L): ListenerGuard<T> {
-    const id = (() => { const _v = this._0._0.value.nextId; this._0._0.value.nextId = wrappingAdd(this._0._0.value.nextId, 1, 'usize'); return _v; })();
+    const id = (() => { const _n = 1; const _v = this._0._0.value.nextId; this._0._0.value.nextId = wrappingAdd(_v, _n, 'usize'); return _v; })();
     const _t0 = this._0._0.value.listeners.write();
     try {
       _t0.value.set(id, IntoBroadcastListener_dispatch_intoBroadcastListener(listener));

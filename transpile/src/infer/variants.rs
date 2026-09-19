@@ -64,10 +64,37 @@ impl TypeContext<'_> {
             return None;
         };
         let found = variants.iter().find(|v| v.name == variant)?;
-        if !found.fields.is_empty() {
+        // How the variant lets its name be WRITTEN, not how many fields it
+        // holds: `Braced {}` holds none and is still not a value, and reading
+        // it as one accepted `take(E::Braced)`, which rustc rejects.
+        if found.constructor != crate::types::Constructor::Unit {
             return None;
         }
         Some((self.registry.name_of(id), variant))
+    }
+
+    /// Is this path a variant declared with BRACES of an enum this crate emits
+    /// a class for?
+    ///
+    /// Such a name is a type and not a value, however few fields the variant
+    /// holds — the rule an empty braced struct already takes. `E::Braced`
+    /// written where Rust needs a value emitted `E.Braced`, a static nothing
+    /// declares, which reads `undefined`.
+    pub fn braced_variant_of_emitted_enum(&self, segments: &[String]) -> bool {
+        let Some((id, variant)) = self.registry.lookup_variant(self.module, segments) else {
+            return false;
+        };
+        let ty = Ty::Named { id, args: Vec::new() };
+        if !crate::emit_impls::has_emitted_class(self.registry, &ty) {
+            return false;
+        }
+        let Some(def) = self.registry.def(id) else { return false };
+        let crate::registry::TypeKind::Enum { variants } = &def.kind else {
+            return false;
+        };
+        variants
+            .iter()
+            .any(|v| v.name == variant && v.constructor == crate::types::Constructor::Braced)
     }
 
     /// The enum and variant a path names, where the path names a variant of an
@@ -100,4 +127,41 @@ impl TypeContext<'_> {
         Some((self.registry.name_of(id), variant))
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::testing::Fixture;
+
+    const ENUM: &str = "pub enum E { Unit, Braced {}, Tuple(u64) }\n\
+         pub fn take(e: E) -> u64 { match e { E::Unit => 1, E::Braced {} => 2, E::Tuple(n) => n } }\n";
+
+    /// A variant declared with BRACES is not a value under its own name however
+    /// few fields it holds, so the bare path is a hole rather than a member no
+    /// class declares.
+    #[test]
+    fn a_braced_variant_written_as_a_bare_path_is_a_hole() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            &format!("{ENUM}pub fn probe() -> u64 {{ take(E::Braced) }}"),
+        )]);
+        let ts = f.translated_method("lib.rs", "probe");
+        assert!(ts.contains("unsupported("), "the bare path is a hole:\n{ts}");
+        assert!(
+            f.messages().iter().any(|m| m.contains("declared with braces")),
+            "and it says so: {:?}",
+            f.messages()
+        );
+    }
+
+    /// A unit variant IS a value, and still builds.
+    #[test]
+    fn a_unit_variant_written_as_a_bare_path_is_built() {
+        let mut f = Fixture::build(&[(
+            "lib.rs",
+            &format!("{ENUM}pub fn probe() -> u64 {{ take(E::Unit) }}"),
+        )]);
+        assert_eq!(f.translated_method("lib.rs", "probe").trim(), "return take(new E('Unit', {}));");
+        assert!(f.messages().is_empty(), "nothing is reported: {:?}", f.messages());
+    }
 }

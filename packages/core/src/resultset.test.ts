@@ -44,7 +44,7 @@ class TestEntity extends Struct implements AbstractEntity {
     if (field === 'id') {
       return new Value('EntityId', { _0: this.id.clone() });
     } else {
-      return this.properties.get(field);
+      return this.properties.get(field)?.clone() ?? null;
     }
   }
 

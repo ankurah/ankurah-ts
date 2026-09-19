@@ -60,7 +60,7 @@ pub(super) enum Update {
         id: TypeId,
         defaults: Vec<Option<Ty>>,
     },
-    /// What a DECLARATION requires of its own type parameters (FF4).
+    /// What a DECLARATION requires of its own type parameters.
     Bounds {
         id: TypeId,
         bounds: Vec<Bound>,
@@ -336,7 +336,7 @@ pub(super) fn resolve_file(
             .collect();
         let fields = resolve_fields(reg, module, &s.type_params, &mut s.fields, sink);
         if let Some(id) = id {
-            // FF4: what the declaration requires of its own parameters, so a
+            // What the declaration requires of its own parameters, so a
             // field that IS one can be asked what the bound makes it.
             let env = TypeEnv::new(reg, module, sink).with_params(&s.type_params);
             let bounds = resolve_bounds(&s.syn_generics, &env, sink);
@@ -356,10 +356,7 @@ pub(super) fn resolve_file(
         let mut variants = Vec::new();
         for v in &mut e.variants {
             let fields = resolve_fields(reg, module, &e.type_params, &mut v.fields, sink);
-            variants.push(VariantDef {
-                name: v.name.clone(),
-                fields,
-            });
+            variants.push(VariantDef { name: v.name.clone(), fields, constructor: v.constructor });
         }
         if let Some(id) = id {
             derived_impls(reg, module, id, &e.type_params, &e.derives, updates);
