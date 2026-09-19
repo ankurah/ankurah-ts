@@ -95,7 +95,7 @@ export class ChangeSet<R extends View & Clone> extends Struct {
     return iterFilterMap([...this.changes], (change) => change.match({
       Initial: (v) => {
         const item = v.item;
-        return item.clone();
+        return derivedClone(item);
       },
       Add: () => null,
       Update: () => null,
@@ -107,7 +107,7 @@ export class ChangeSet<R extends View & Clone> extends Struct {
     return iterFilterMap([...this.changes], (change) => change.match({
       Add: (v) => {
         const item = v.item;
-        return item.clone();
+        return derivedClone(item);
       },
       Initial: () => null,
       Update: () => null,
@@ -119,11 +119,11 @@ export class ChangeSet<R extends View & Clone> extends Struct {
     return iterFilterMap([...this.changes], (change) => change.match({
       Add: (v) => {
         const item = v.item;
-        return item.clone();
+        return derivedClone(item);
       },
       Initial: (v) => {
         const item = v.item;
-        return item.clone();
+        return derivedClone(item);
       },
       Update: () => null,
       Remove: () => null,
@@ -138,7 +138,7 @@ export class ChangeSet<R extends View & Clone> extends Struct {
     return iterFilterMap([...this.changes], (change) => change.match({
       Remove: (v) => {
         const item = v.item;
-        return item.clone();
+        return derivedClone(item);
       },
       Initial: () => null,
       Add: () => null,
@@ -154,7 +154,7 @@ export class ChangeSet<R extends View & Clone> extends Struct {
     return iterFilterMap([...this.changes], (change) => change.match({
       Update: (v) => {
         const item = v.item;
-        return item.clone();
+        return derivedClone(item);
       },
       Initial: () => null,
       Add: () => null,

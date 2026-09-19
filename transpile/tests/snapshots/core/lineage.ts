@@ -28,7 +28,7 @@ export class EventAccumulator<Event extends Clone> extends Struct {
         }
       }
     }
-    this.events.push(event.clone());
+    this.events.push(derivedClone(event));
     return true;
   }
 
@@ -256,7 +256,7 @@ class Comparison<G extends GetEvents> extends Struct {
     const fromSubject = this.subjectFrontier.remove(id);
     const fromOther = this.otherFrontier.remove(id);
     const [isCommon, origins] = (() => {
-      const nodeState = this.states.entry(id.clone()).orDefault(() => State.default());
+      const nodeState = this.states.entry(derivedClone(id)).orDefault(() => State.default());
       nodeState.value.markSeenFrom(fromSubject, fromOther);
       if (fromSubject && !this.originalOtherEvents.has(id) && !nodeState.value.isCommon()) {
         {
@@ -268,17 +268,17 @@ class Comparison<G extends GetEvents> extends Struct {
         }
       }
       if (fromOther && this.originalOtherEvents.has(id)) {
-        nodeState.value.origins.add(id.clone());
+        nodeState.value.origins.add(derivedClone(id));
       }
       return [nodeState.value.isCommon(), nodeState.value.origins.clone()];
     })();
-    if (isCommon && this.meetCandidates.insert(id.clone())) {
+    if (isCommon && this.meetCandidates.insert(derivedClone(id))) {
       this.anyCommon = true;
       for (const h of [...origins.deref()]) {
         this.outstandingHeads.delete(h);
       }
       for (const p of parents) {
-        const parentState = this.states.entry(p.clone()).orDefault(() => State.default());
+        const parentState = this.states.entry(derivedClone(p)).orDefault(() => State.default());
         if (fromOther) {
           parentState.value.origins.augment(origins);
         }
@@ -286,7 +286,7 @@ class Comparison<G extends GetEvents> extends Struct {
       }
     } else if (fromOther) {
       for (const p of parents) {
-        const parentState = this.states.entry(p.clone()).orDefault(() => State.default());
+        const parentState = this.states.entry(derivedClone(p)).orDefault(() => State.default());
         parentState.value.origins.augment(origins);
       }
     }

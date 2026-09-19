@@ -222,6 +222,17 @@ impl TypeContext<'_> {
             }
         }
 
+        // A name in scope holding a CALLABLE — `predicate` at
+        // `fn wait_for<F, R>(&self, predicate: F) where F: Fn(&T) -> R` — is
+        // called through what its bound says it does, and the call answers that
+        // bound's output. Read as a function name instead, it resolved to
+        // nothing and `predicate(value).result()` was left dispatching `result`
+        // by name on a value nothing had typed.
+        if let Some(output) = self.callable_local_output(&call.func) {
+            self.constrain_free_arguments(call);
+            return Ok(output);
+        }
+
         // A free function declared in reach. What it resolves to is its
         // declared return type; what its parameters say about the arguments is
         // read here, because nothing else reads them.

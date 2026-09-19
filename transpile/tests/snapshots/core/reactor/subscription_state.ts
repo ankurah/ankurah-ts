@@ -114,7 +114,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                 const _v = state.entities.get(entityId);
                 if (_v != null) {
                   const entity = _v;
-                  updateItems.push(new ReactorUpdateItem(entity.clone(), [], [[queryId, new MembershipChange('Remove', {})]]));
+                  updateItems.push(new ReactorUpdateItem(derivedClone(entity), [], [[queryId, new MembershipChange('Remove', {})]]));
                 }
               }
             }
@@ -243,8 +243,8 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                 if (evaluatePredicate(entity, selection.predicate).unwrapOr(false)) {
                   const entityId = AbstractEntity.id(entity);
                   if (!rwResultset.contains(entityId)) {
-                    rwResultset.add(entity.clone());
-                    state.entities.set(entityId, entity.clone());
+                    rwResultset.add(derivedClone(entity));
+                    state.entities.set(entityId, derivedClone(entity));
                     state.entitySubscriptions.add(entityId);
                     reactorUpdates.pushInitial(entity, queryId);
                     newlyAdded.push(entity);
@@ -394,10 +394,10 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                       const _v3 = [didMatch, matches];
                       if ((_v3[0] === false) && (_v3[1] === true)) {
                         {
-                          const entityClone = entity.clone();
+                          const entityClone = derivedClone(entity);
                           const _t7 = queryState.resultset.write();
                           try {
-                            _t7.add(entityClone.clone());
+                            _t7.add(derivedClone(entityClone));
                           } finally {
                             _t7.drop();
                           }
@@ -425,7 +425,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                     })();
                     const entitySubscribed = state.entitySubscriptions.has(entityId);
                     if (matches || didMatch || entitySubscribed) {
-                      const item = items.entry(entityId).orInsertWith(() => new ReactorUpdateItem(entity.clone(), change.events().map((e) => derivedClone(e)), []));
+                      const item = items.entry(entityId).orInsertWith(() => new ReactorUpdateItem(derivedClone(entity), change.events().map((e) => derivedClone(e)), []));
                       {
                         const _v4 = membershipChange;
                         if (_v4 != null) {
@@ -443,7 +443,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                 const entity = change.entity();
                 const entityId = AbstractEntity.id(entity);
                 if (state.entitySubscriptions.has(entityId)) {
-                  items.entry(entityId).orInsert(new ReactorUpdateItem(entity.clone(), change.events().map((e) => derivedClone(e)), []));
+                  items.entry(entityId).orInsert(new ReactorUpdateItem(derivedClone(entity), change.events().map((e) => derivedClone(e)), []));
                 }
               }
               let _moved9 = false;
@@ -562,7 +562,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                 try {
                   let addedEntities = [];
                   for (const entity of gapEntities) {
-                    if (write.add(entity.clone())) {
+                    if (write.add(derivedClone(entity))) {
                       addedEntities.push(entity);
                     }
                   }
@@ -709,7 +709,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
                     let gapItems = [];
                     try {
                       for (const entity of gapEntities) {
-                        if (write.add(entity.clone())) {
+                        if (write.add(derivedClone(entity))) {
                           gapItems.push(new ReactorUpdateItem(entity, [], [[queryId, new MembershipChange('Add', {})]]));
                         }
                       }
@@ -764,7 +764,7 @@ class Subscription<E extends AbstractEntity & Filterable, Ev extends Clone> exte
             const resultset = EntityResultSet.empty();
             try {
               let _moved2 = false;
-              const gapFetcher = Arc.new(QueryGapFetcher.new(node, cdata.clone()));
+              const gapFetcher = Arc.new(QueryGapFetcher.new(node, derivedClone(cdata)));
               try {
                 const _b3 = resultset.clone();
                 _moved0 = true;
@@ -837,11 +837,11 @@ export interface UpdateItemAccumulator<E, Ev> {
 type GapFillData = [QueryId, Arc<GapFetcher>, CollectionId, Selection, EntityResultSet<E>, E | null, number];
 
 export function Vec_ReactorUpdateItem_pushInitial<E extends Clone, Ev>(self: ReactorUpdateItem<E, Ev>[], entity: E, queryId: QueryId): void {
-  Vec.push(self, new ReactorUpdateItem(entity.clone(), [], [[queryId, new MembershipChange('Initial', {})]]));
+  Vec.push(self, new ReactorUpdateItem(derivedClone(entity), [], [[queryId, new MembershipChange('Initial', {})]]));
 }
 
 export function Vec_ReactorUpdateItem_pushRemove<E extends Clone, Ev>(self: ReactorUpdateItem<E, Ev>[], entity: E, queryId: QueryId): void {
-  Vec.push(self, new ReactorUpdateItem(entity.clone(), [], [[queryId, new MembershipChange('Remove', {})]]));
+  Vec.push(self, new ReactorUpdateItem(derivedClone(entity), [], [[queryId, new MembershipChange('Remove', {})]]));
 }
 
 export function Unit_pushInitial<E, Ev>(self: void, _entity: E, _queryId: QueryId): void {

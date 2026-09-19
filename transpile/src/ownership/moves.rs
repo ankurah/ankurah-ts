@@ -360,6 +360,13 @@ impl<'c> Scan<'c> {
     }
 
     /// Every local a `move` closure names, which is everything it captured.
+    ///
+    /// A macro's arguments are tokens, not expressions a syn walk descends
+    /// into, so a capture named only inside one — `move || format!("{}",
+    /// first)` — was invisible: the closure came out a bare arrow owning
+    /// nothing while the block that gave `first` away released it. The operands
+    /// come from the one list the emitter and the typing walk read, so a macro
+    /// whose arguments the port never reads contributes no capture here either.
     fn mentions(&self, body: &syn::Expr, out: &mut Vec<Site>) {
         struct Names<'o> {
             out: &'o mut Vec<Site>,
@@ -378,15 +385,20 @@ impl<'c> Scan<'c> {
                     });
                 }
             }
+            fn visit_macro(&mut self, mac: &syn::Macro) {
+                // The operands are parsed here and owned by this frame, so they
+                // are walked by a visitor of their own rather than by `self`,
+                // whose borrows outlive them.
+                for operand in crate::macros::macro_argument_exprs(mac) {
+                    names_in(&operand, self.out, self.shadowed);
+                }
+            }
+        }
+        fn names_in(body: &syn::Expr, out: &mut Vec<Site>, shadowed: &[Vec<String>]) {
+            syn::visit::Visit::visit_expr(&mut Names { out, shadowed }, body);
         }
         let shadowed = self.shadowed.borrow();
-        syn::visit::Visit::visit_expr(
-            &mut Names {
-                out,
-                shadowed: &shadowed,
-            },
-            body,
-        );
+        names_in(body, out, &shadowed);
     }
 }
 

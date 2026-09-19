@@ -173,6 +173,21 @@ pub fn translate_method_using(
     // unwrap/expect is handled in body.rs before dispatch reaches here.
     // Result.unwrap() passes through to Passthrough (handled by Result's class method).
 
+    // An explicit `.clone()` is the operation a derive writes, so it asks the
+    // same rule: a receiver the engine cannot name is copied by its own surface
+    // at run time. Written as `x.clone()` it landed on whatever `T` turned out
+    // to be, and a number carries no `clone`.
+    if rust_method == "clone" && args.is_empty() {
+        let ty = receiver_ty.peel_refs();
+        if crate::derives::cloning::decided_by_the_value(ty) {
+            return MethodTranslation::Expr(crate::derives::cloning::clone_within(
+                reg,
+                receiver,
+                Some(ty),
+            ));
+        }
+    }
+
     // A projection the impl table could not answer — `<impl IntoIterator as
     // IntoIterator>::IntoIter` before the closures step types it — names no
     // type, so nothing is known about how a call on it is written. That is the

@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/signal/calculated.rs
-import { Struct, Arc, RwLock, OwnedClosure, invoke, invokeRef, Invocable, dropOwned, HashMap } from '@ankurah/base';
+import { Struct, Arc, RwLock, OwnedClosure, invoke, invokeRef, Invocable, dropOwned, derivedClone, HashMap } from '@ankurah/base';
 import { Broadcast, BroadcastId } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { Observer } from '../observer';
@@ -80,11 +80,11 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
 
   get(): T {
     CurrentObserver.track(this);
-    return this._0.value.value.with((opt) => (opt ?? (() => { throw new Error('Calculated value not initialized'); })()).clone());
+    return this._0.value.value.with((opt) => derivedClone((opt ?? (() => { throw new Error('Calculated value not initialized'); })())));
   }
 
   peek(): T {
-    return this._0.value.value.with((opt) => (opt ?? (() => { throw new Error('Calculated value not initialized'); })()).clone());
+    return this._0.value.value.with((opt) => derivedClone((opt ?? (() => { throw new Error('Calculated value not initialized'); })())));
   }
 
   with<R>(f: (arg0: T) => R): R {
@@ -113,7 +113,7 @@ export class Calculated<T extends Clone> extends Struct implements Get<T>, Peek<
     const listener_1 = IntoSubscribeListener_dispatch_intoSubscribeListener(listener);
     const roValue = this._0.value.value.readvalue();
     const subscription = this.listen(Arc.new(new OwnedClosure([roValue, listener_1], (_) => {
-      const current = roValue.with((opt) => (opt ?? (() => { throw new Error('Calculated value not initialized'); })()).clone());
+      const current = roValue.with((opt) => derivedClone((opt ?? (() => { throw new Error('Calculated value not initialized'); })())));
       invokeRef(listener_1, current);
     })));
     return SubscriptionGuard.new(subscription);

@@ -34,7 +34,7 @@ export class QueryGapFetcher<SE extends StorageEngine, PA extends PolicyAgent> e
       let _moved3 = false;
       const node = new Node(nodeInner);
       try {
-        const _b4 = this.cdata.clone();
+        const _b4 = derivedClone(this.cdata);
         _moved3 = true;
         const nodeContext = new NodeAndContext(node, _b4);
         try {

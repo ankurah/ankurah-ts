@@ -47,12 +47,11 @@ total = 85
 "X has no expected type here, so what it converts to is not said and the value stands as it is" = 5
 "X converts the error from X to X through X, and the conversion is fixed by a bound on a type parameter, so which impl runs is decided per instantiation and one emitted body cannot say" = 4
 "X gets no X/X pair: its X X has no X in the port, so a type with a field of it gets no X/X pair either" = 4
-"X has a type the engine cannot say owns anything, so nothing releases it" = 3
+"X has a type the engine cannot say owns anything, so nothing releases it" = 4
 "X and an earlier impl in this file both emit a module-level function called X, so one of them is lost: the two impls differ in something the naming scheme does not write down" = 2
 "X is written on a receiver the engine could not type, so the copy is written by the method's name alone" = 2
 "X's X prints under Debug as whatever its X says, because X is a std type with no Debug rendering in the port" = 2
 "X converts from X" = 1
-"X does not name a function here" = 1
 "X's X is encoded by calling X, and nothing in the port emits a class of that name, so reading one raises at run time" = 1
 "X's X prints under Debug as whatever its X says, because X is not declared" = 1
 "X's message prints X with X, and it prints as whatever its X says, because X is not declared" = 1
@@ -61,12 +60,12 @@ total = 85
 "this closure's parameters are X, X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what they hold" = 1
 
 [signals]
-total = 87
+total = 86
 
 [signals.by_cause]
 "this closure owns X and is written as an X, which is not a bare callable" = 18
 "X has a type the engine cannot say owns anything, so nothing releases it" = 9
-"this closure owns X, X and is written as an X, which is not a bare callable" = 8
+"this closure owns X, X and is written as an X, which is not a bare callable" = 9
 "X is declared in more than one module of this crate, and this file names it unqualified: the import binds one of them and a signature written against the other names the wrong class. The crate index tells them apart with an alias" = 7
 "path qualifiers std, sync, atomic are dropped by name" = 6
 "X is written on a value the engine could not type, so which conversion it performs is not known" = 5
@@ -76,7 +75,6 @@ total = 87
 "this closure's parameter is X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what it holds" = 4
 "path qualifiers std, marker are dropped by name" = 3
 "this X takes a droppable value apart, and the parts are released separately in Rust" = 3
-"X does not name a function here" = 2
 "no method X on X" = 2
 "the callee is not a path, so nothing names what it calls" = 2
 "X for X emits a method called X, and something on this class already has that name, so this one is not written and every call to it goes to the other" = 1
@@ -86,7 +84,7 @@ total = 87
 "raw pointer type is not modelled" = 1
 
 [core]
-total = 1392
+total = 1386
 
 [core.by_cause]
 "obligation deferred: X (the subject is still a type parameter)" = 249
@@ -105,6 +103,7 @@ total = 1392
 "X's X prints under Debug as whatever its X says, because X's TypeScript is written by hand and its X entry does not say it declares X, so there is none to call" = 30
 "X is declared in another module, so this impl is written as module-level functions here rather than as methods on its class" = 22
 "X keeps its keys in order, and the port's keyed containers iterate in insertion order" = 22
+"X here is called through a bound on X, whose impls are emitted as module-level functions, and no run-time selection among them can be written because fewer than two impls have a run-time test, so nothing has to be chosen" = 19
 "this X takes a droppable value apart, and the parts are released separately in Rust" = 17
 "X has no expected type here, so what it converts to is not said and the value stands as it is" = 15
 "no field X on X" = 14
@@ -114,7 +113,6 @@ total = 1392
 "X converts from X to X through X, and the impl performing it is the declared surface's, so the conversion is the runtime's own, and the port has no X for it to be a member of" = 11
 "X moves a field the runtime writes as a plain value" = 11
 "X's X prints under Debug as whatever its X says, because X has no Debug rendering in the port" = 11
-"the receiver of X is a projection the impl table could not settle, so the call is written from its name alone" = 11
 "X carries a pattern that has to be tested, and the port reads a X's payload once, into the binding, so what it tests is not tested" = 10
 "no declaration for type X" = 10
 "no associated function X on X" = 9
@@ -125,12 +123,10 @@ total = 1392
 "X's X prints under Debug as whatever its X says, because XTX has no Debug rendering in the port" = 8
 "path qualifiers std, sync, atomic are dropped by name" = 8
 "this closure's parameter is X typed by nothing the engine can read: neither an annotation on the closure nor the position it stands in says what it holds" = 8
-"X here is called through a bound on X, whose impls are emitted as module-level functions, and no run-time selection among them can be written because fewer than two impls have a run-time test, so nothing has to be chosen" = 7
 "X between X and X resolves through X, and no impl in the table performs it" = 6
 "X converts X to X, which is not a conversion between two numbers" = 6
-"X for X has no run-time test the dispatcher can make, because the impl for X is written for a type the port has no class to test against" = 6
-"X is lowered as a X without the engine having named what it tests" = 6
 "X is a receiver the engine does not model" = 5
+"X is lowered as a X without the engine having named what it tests" = 5
 "X's X prints under Debug as whatever its X says, because X is not declared" = 5
 "this loop takes the sequence by value, and the runtime does not write it as an array" = 5
 "X builds whatever its target type names, and the engine could not name the type this one is collected into" = 4

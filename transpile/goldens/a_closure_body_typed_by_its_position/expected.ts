@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/a_closure_body_typed_by_its_position/src/input.rs
-import { Struct, invokeRef, Invocable, dropOwned } from '@ankurah/base';
+import { Struct, invokeRef, Invocable, dropOwned, checkedAdd } from '@ankurah/base';
 
 export class Tag extends Struct {
   readonly text: string;
@@ -35,7 +35,7 @@ export class Bus extends Struct {
     try {
       let total = 0;
       for (const entity of this.entities) {
-        total += invokeRef(f, entity);
+        total = checkedAdd(total, invokeRef(f, entity), 'usize');
       }
       return total;
     } finally {
@@ -48,7 +48,7 @@ export function overEach(entities: Entity[], f: Invocable<[Entity], number>): nu
   try {
     let total = 0;
     for (const entity of entities) {
-      total += invokeRef(f, entity);
+      total = checkedAdd(total, invokeRef(f, entity), 'usize');
     }
     return total;
   } finally {

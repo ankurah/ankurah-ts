@@ -120,6 +120,24 @@ impl TypeContext<'_> {
         )
     }
 
+    /// What calling a name that HOLDS a callable answers with.
+    ///
+    /// `predicate` in `fn wait_for<F, R>(&self, predicate: F) -> R::Output where
+    /// F: Fn(&T) -> R` names no function: it is a parameter of a callable type,
+    /// and the call answers what that bound outputs. Read as a function name it
+    /// resolved to nothing, and `predicate(value).result()` was left dispatching
+    /// `result` by name on a value nothing had typed. Only a name something in
+    /// scope answers to is asked here, so a free function keeps its own return
+    /// type.
+    pub(super) fn callable_local_output(&self, callee: &syn::Expr) -> Option<Ty> {
+        let syn::Expr::Path(path) = callee else { return None };
+        let name = path.path.get_ident()?.to_string();
+        self.lookup(&name)?;
+        let ty = self.actual_of(callee)?;
+        let shape = expected::fn_shape(self.registry, &ty, &self.param_bounds)?;
+        Some(shape.output)
+    }
+
     /// What a value standing where a function is called takes, read off the
     /// callable it holds.
     fn indirect_argument_types(&self, callee: &syn::Expr) -> Option<Vec<Option<Ty>>> {

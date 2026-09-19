@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/context.rs
-import { Struct, Result, Arc, dropOwned, OwnershipFatal, UnsupportedShape, tracing, dropUnbound, unsupported, iterFirst, debugString } from '@ankurah/base';
+import { Struct, Result, Arc, dropOwned, OwnershipFatal, UnsupportedShape, derivedClone, tracing, dropUnbound, unsupported, iterFirst, debugString } from '@ankurah/base';
 import { Attested, Clock, CollectionId, EntityState, EntityId, Event, NodeRequestBody } from '@ankurah/proto';
 import { EntityChange } from './changes';
 import { Entity } from './entity';
@@ -681,7 +681,7 @@ export class NodeAndContext<SE extends StorageEngine, PA extends PolicyAgent> ex
     let _moved1 = false;
     try {
       try {
-        const _b2 = this.cdata.clone();
+        const _b2 = derivedClone(this.cdata);
         _moved0 = true;
         _moved1 = true;
         return EntityLiveQuery.new(this.node, collectionId, args, _b2);

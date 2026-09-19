@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/signal/memo.rs
-import { Struct, Arc, RwLock, OwnedClosure, invoke, invokeRef, Invocable, dropOwned } from '@ankurah/base';
+import { Struct, Arc, RwLock, OwnedClosure, invoke, invokeRef, Invocable, dropOwned, derivedClone } from '@ankurah/base';
 import { BroadcastId } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { IntoSubscribeListener_dispatch_intoSubscribeListener, Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
@@ -85,7 +85,7 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
   }
 
   clone(): Memo<Upstream, Input, Output, Transform> {
-    return Memo.new(this.source.clone(), this.transform.clone());
+    return Memo.new(derivedClone(this.source), derivedClone(this.transform));
   }
 
   listen(listener: Listener): ListenerGuard {
@@ -109,23 +109,23 @@ export class Memo<Upstream extends Signal & With<Input> & Clone, Input, Output e
 
   get(): Output {
     CurrentObserver.track(this.source);
-    return this.withCached((v) => v.clone());
+    return this.withCached((v) => derivedClone(v));
   }
 
   peek(): Output {
-    return this.withCached((v) => v.clone());
+    return this.withCached((v) => derivedClone(v));
   }
 
   subscribe<L>(listener: L): SubscriptionGuard {
     const listener_1 = IntoSubscribeListener_dispatch_intoSubscribeListener(listener);
-    const source = this.source.clone();
-    const transform = this.transform.clone();
+    const source = derivedClone(this.source);
+    const transform = derivedClone(this.transform);
     const cached = this.cached.clone();
     const subscription = this.source.listen(Arc.new(new OwnedClosure([cached, listener_1], (_) => {
       const output = source.with((input) => invokeRef(transform, input));
       const _t0 = cached.value.write();
       try {
-        _t0.value = output.clone();
+        _t0.value = derivedClone(output);
       } finally {
         _t0.drop();
       }

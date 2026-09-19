@@ -402,19 +402,7 @@ fn batch_generate(
                 .entry(f.ts_name.clone())
                 .or_insert_with(|| ts_module.clone());
         }
-        // Register inline module symbols (types go in type_to_file, functions tracked separately)
-        for (mod_name, sub_file) in &rust_file.inline_modules {
-            let sub_module = format!("{}/{}", ts_module.trim_end_matches("/index"), mod_name);
-            for s in &sub_file.structs {
-                type_to_file.insert(s.name.clone(), sub_module.clone());
-            }
-            for e in &sub_file.enums {
-                type_to_file.insert(e.name.clone(), sub_module.clone());
-            }
-            for t in &sub_file.traits {
-                type_to_file.insert(t.name.clone(), sub_module.clone());
-            }
-        }
+        imports::register_inline_modules(&rust_file, &ts_module, &mut type_to_file);
 
         parsed_files.push(registry::ExtractedFile {
             path: rel_str,

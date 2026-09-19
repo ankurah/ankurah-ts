@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/livequery.rs
-import { Struct, Drop, Result, Arc, Weak, OwnedClosure, invokeRef, dropOwned, tracing, checkedAdd, wrappingAdd, iterFirst, Notify, tokio, spawn } from '@ankurah/base';
+import { Struct, Drop, Result, Arc, Weak, OwnedClosure, invokeRef, dropOwned, derivedClone, tracing, checkedAdd, wrappingAdd, iterFirst, Notify, tokio, spawn } from '@ankurah/base';
 import { CollectionId, Attested, EntityId, Event, QueryId } from '@ankurah/proto';
 import { BroadcastId, CurrentObserver, Get, Listener, ListenerGuard, Mut, Peek, Read, Signal, Subscribe, SubscriptionGuard } from '@ankurah/signals';
 import { ChangeSet, ItemChange } from './changes';
@@ -45,7 +45,7 @@ export class EntityLiveQuery extends Struct implements PreNotifyHook {
           try {
             const queryId = QueryId.new();
             let _moved5 = false;
-            const gapFetcher = Arc.new(QueryGapFetcher.new(node, cdata.clone()));
+            const gapFetcher = Arc.new(QueryGapFetcher.new(node, derivedClone(cdata)));
             try {
               let _moved7 = false;
               const _b6 = node.clone();
@@ -96,7 +96,7 @@ export class EntityLiveQuery extends Struct implements PreNotifyHook {
                             let _moved20 = false;
                             const _b19 = args.selection.clone();
                             try {
-                              const _b21 = cdata.clone();
+                              const _b21 = derivedClone(cdata);
                               const _b22 = me.weak();
                               _moved18 = true;
                               _moved20 = true;
@@ -309,7 +309,7 @@ export class WeakEntityLiveQuery extends Struct implements RemoteQuerySubscriber
 
   upgrade(): EntityLiveQuery | null {
     const _m0 = this._0.upgrade();
-    return (_m0 != null ? (EntityLiveQuery)(_m0!) : null);
+    return (_m0 != null ? (((_0) => new EntityLiveQuery(_0)))(_m0!) : null);
   }
 
   clone(): WeakEntityLiveQuery {

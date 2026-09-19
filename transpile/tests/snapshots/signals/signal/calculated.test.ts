@@ -38,16 +38,8 @@ describe('calculated unit tests', () => {
       try {
         const fullName = (() => {
           const first = firstName.read();
-          try {
-            const last = lastName.read();
-            try {
-              return Calculated.new(() => `${first.get()} ${last.get()}`);
-            } finally {
-              last.drop();
-            }
-          } finally {
-            first.drop();
-          }
+          const last = lastName.read();
+          return Calculated.new(new OwnedClosure([first, last], () => `${first.get()} ${last.get()}`));
         })();
         try {
           expect(fullName.get()).toEqual('Alice Smith');

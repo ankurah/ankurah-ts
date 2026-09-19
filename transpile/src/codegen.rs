@@ -1,6 +1,7 @@
 //! Top-level TS code generation — orchestrates imports, emission, and output
 
 mod base_symbols;
+mod dispatchers;
 mod paths;
 use paths::{codec_import, crate_path_to_fqn_prefix, relative_import_path};
 mod const_order;
@@ -39,9 +40,6 @@ pub fn generate_ts_with_imports_configured(
     if let Some(module) = reg.modules().lookup_file(&file.path) {
         for f in crate::emit_impls::free_functions(reg, module, file) {
             local_types.insert(f.name);
-        }
-        for d in crate::emit_impls::dispatchers(reg, module, file) {
-            local_types.insert(d.name);
         }
     }
 
@@ -115,6 +113,7 @@ pub fn generate_ts_with_imports_configured(
             imports::collect_written_named_refs(body, &free_names, &mut referenced);
         }
     }
+    dispatchers::names_written(reg, file, &free_names, &mut local_types, &mut referenced);
 
     // Group external types by source module
     let mut imports_by_module: HashMap<String, Vec<String>> = HashMap::new();

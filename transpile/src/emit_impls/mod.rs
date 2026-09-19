@@ -40,6 +40,7 @@ pub use naming::{
 mod dispatch;
 mod name;
 mod open_dispatch;
+mod shape_tests;
 #[cfg(test)]
 mod tests;
 

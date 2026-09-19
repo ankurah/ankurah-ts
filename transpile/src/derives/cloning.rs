@@ -131,10 +131,22 @@ fn refused(message: &str) -> crate::native_types::MethodTranslation {
     }
 }
 
+/// Is this a value whose copy is decided by the value itself, at run time?
+///
+/// A type the engine cannot name here — a parameter, a projection, an unknown
+/// the solver never settled — stands for a different surface at every
+/// instantiation: `T` is a number in `Holder<u32>` and a class in
+/// `Holder<Item>`, and `.clone()` on a number is a TypeError. `derivedClone`
+/// reads the value's own surface instead, which is the only answer one emitted
+/// body can give for all of them.
+pub(crate) fn decided_by_the_value(ty: &Ty) -> bool {
+    matches!(ty, Ty::Param(_) | Ty::Assoc { .. } | Ty::Infer | Ty::Var(_))
+}
+
 /// The same, told how deep inside a container it is, so a `map` inside a `map`
 /// names its own element.
 fn clone_at(reg: &TypeRegistry, place: &str, ty: &Ty, depth: usize) -> String {
-    if matches!(ty, Ty::Param(_) | Ty::Assoc { .. } | Ty::Infer) {
+    if decided_by_the_value(ty) {
         return format!("derivedClone({})", place);
     }
     // Every width, `char` and `bool` are their own copy. `char` is asked here

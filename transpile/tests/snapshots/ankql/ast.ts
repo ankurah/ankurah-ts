@@ -394,7 +394,7 @@ export class Expr extends Enum<ExprV> {
   }
 
   static fromT<T>(slice: T[]): Expr {
-    return new Expr('ExprList', { _0: [...slice].map((item) => item.clone()) });
+    return new Expr('ExprList', { _0: [...slice].map((item) => derivedClone(item)) });
   }
 
   clone(): Expr {

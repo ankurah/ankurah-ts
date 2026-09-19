@@ -1,7 +1,10 @@
 // MIRRORS: ankurah/core/src/property/mod.rs
 import { Result, Ref, dropOwned } from '@ankurah/base';
+import { Item_intoValue } from '../system';
 import { Value } from '../value/index';
 import { PropertyError } from './traits';
+import { Json } from './value/json';
+import { Item } from '@ankurah/proto';
 export * from './backend';
 export * from './traits';
 export * from './value';
@@ -160,11 +163,10 @@ export function Value_from(value: string): Value {
 }
 
 export function Property_dispatch_intoValue(self: unknown): Result<Value | null, PropertyError> {
-  if (self instanceof Option) return Option_intoValue(self as any);
   if (self instanceof Cow) return Cow_Str_intoValue(self as any);
   if (self instanceof Ref) return (self as any).intoValue();
   if (self instanceof Json) return (self as any).intoValue();
   if (self instanceof Item) return Item_intoValue(self as any);
-  throw new Error(`BUG: no Property impl for ${(self as object)?.constructor?.name ?? typeof self}`);
+  return Option_intoValue(self as any);
 }
 

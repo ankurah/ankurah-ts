@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/broadcast.rs
-import { Struct, Enum, Drop, Result, Arc, Weak, RwLock, OwnedClosure, invokeRef, Invocable, dropOwned, wrappingAdd, HashMap, keyHash, Sender, UnboundedSender } from '@ankurah/base';
+import { Struct, Enum, Drop, Result, Arc, Weak, RwLock, OwnedClosure, invokeRef, Invocable, dropOwned, derivedClone, wrappingAdd, HashMap, keyHash, Sender, UnboundedSender } from '@ankurah/base';
 
 export class BroadcastId extends Struct {
   _0: number;
@@ -72,22 +72,22 @@ export class Broadcast<T extends Clone = void> extends Struct {
             callback.match({
               Payload: (v) => {
                 const callback = v._0;
-                return invokeRef(callback.value, value.clone());
+                invokeRef(callback.value, derivedClone(value));
               },
               NotifyOnly: (v) => {
                 const callback = v._0;
-                return invokeRef(callback.value);
+                invokeRef(callback.value);
               },
             });
           }
           return last.match({
             Payload: (v) => {
               const callback = v._0;
-              return invokeRef(callback.value, value);
+              invokeRef(callback.value, value);
             },
             NotifyOnly: (v) => {
               const callback = v._0;
-              return invokeRef(callback.value);
+              invokeRef(callback.value);
             },
           });
         }

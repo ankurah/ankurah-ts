@@ -107,12 +107,18 @@ fn split_top_level(inner: &str) -> Vec<String> {
     items
 }
 
-/// Extract PascalCase type names from a TS type string
+/// Extract PascalCase type names from a TS type string.
+///
+/// The names left out here are the ones the emission writes for JavaScript's own
+/// — `Error`, `Promise`, an array, a set — and no `use` and no crate module
+/// declares them. Whether a name the CRATE declares is imported is the import
+/// writer's question, and `is_primitive_or_base_type` is where it is answered;
+/// `Map` was on both lists, so signals' own `Map` never reached that question.
 pub fn collect_type_refs(ty: &str, refs: &mut HashSet<String>) {
     for word in ty.split(|c: char| !c.is_alphanumeric() && c != '_') {
         if word.is_empty() || word.len() == 1 { continue; } // Skip single-letter generics (T, U, V, etc.)
         if word.chars().next().unwrap().is_uppercase()
-            && !matches!(word, "Map" | "Set" | "Promise" | "Uint8Array" | "Array" | "Error")
+            && !matches!(word, "Set" | "Promise" | "Uint8Array" | "Array" | "Error")
         {
             refs.insert(word.to_string());
         }
@@ -141,15 +147,56 @@ pub fn collect_written_named_refs(text: &str, known: &HashSet<String>, refs: &mu
     }
 }
 
+/// A name the port's own emission already binds in every file: a TypeScript
+/// keyword, a symbol the runtime exports, or a global the type writer writes a
+/// Rust concept as — `Iterable<T>` for an `IntoIterator` bound, `Promise<T>` for
+/// a future, `Uint8Array` for a `Vec<u8>`. None of them is imported from the
+/// crate, and a crate type of the same name cannot be either: there is one name
+/// here where Rust had two paths, and telling the two apart needs an alias the
+/// import writer cannot write yet.
+///
+/// `Map` is NOT one of them. The port writes Rust's maps as base's `HashMap`,
+/// and writes `Map` nowhere, so `Map` in an emitted file is a crate's own type —
+/// signals declares one — and suppressing its import left `Map.new(..)` on
+/// JavaScript's global, which has no `new`.
 pub fn is_primitive_or_base_type(ty: &str) -> bool {
     matches!(ty, "string" | "boolean" | "number" | "void" | "never" | "unknown" | "bigint"
         | "Struct" | "Enum" | "Drop" | "Arc" | "Weak" | "Mutex" | "MutexGuard"
         | "RwLock" | "RwLockReadGuard" | "RwLockWriteGuard"
         | "RefCell" | "Ref" | "RefMut"
         | "Borrow" | "BorrowMut" | "BincodeReader" | "BincodeWriter"
-        | "Map" | "Set" | "Promise" | "Uint8Array" | "Array" | "Iterator" | "Iterable"
+        | "Set" | "Promise" | "Uint8Array" | "Array" | "Iterator" | "Iterable"
         | "Result"
     )
+}
+
+/// Which module an inline module's declarations are imported from.
+///
+/// Not the test module's: those are emitted into the `.test.ts` beside the tests
+/// that name them, and there is no module at `<file>/tests` for anything to
+/// import from, so a claim here sent a production file — a dispatcher naming a
+/// `#[cfg(test)]` impl — to a module nothing writes.
+pub fn register_inline_modules(
+    file: &crate::types::RustFile,
+    ts_module: &str,
+    type_to_file: &mut std::collections::HashMap<String, String>,
+) {
+    let emitted = file
+        .inline_modules
+        .iter()
+        .filter(|(name, _)| Some(name) != file.test_module.as_ref());
+    for (mod_name, sub_file) in emitted {
+        let sub_module = format!("{}/{}", ts_module.trim_end_matches("/index"), mod_name);
+        let declared = sub_file
+            .structs
+            .iter()
+            .map(|s| &s.name)
+            .chain(sub_file.enums.iter().map(|e| &e.name))
+            .chain(sub_file.traits.iter().map(|t| &t.name));
+        for name in declared {
+            type_to_file.insert(name.clone(), sub_module.clone());
+        }
+    }
 }
 
 /// The names a test file has to import from the module it is the test half of,

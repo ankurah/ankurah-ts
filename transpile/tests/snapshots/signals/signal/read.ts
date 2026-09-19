@@ -5,6 +5,7 @@ import { CurrentObserver } from '../context';
 import { IntoSubscribeListener_dispatch_intoSubscribeListener, Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
 import { Get, GetReadCell, ListenerGuard, Peek, Signal, With } from '../signal';
 import { ReadValueCell, ValueCell } from '../value';
+import { Map } from './map';
 import { Memo } from './memo';
 
 export class Read<T extends Clone & PartialEq & Eq & Display> extends Struct implements Get<T>, Peek<T>, With<T>, GetReadCell<T>, Signal, Subscribe<T> {

@@ -76,13 +76,13 @@ export function handsAPlainOne(n: number): number {
 
 export function twiceByValue(f: Invocable<[number], number>, n: number): number {
   try {
-    return invokeRef(f, n) + invokeRef(f, n);
+    return checkedAdd(invokeRef(f, n), invokeRef(f, n), 'usize');
   } finally {
     dropOwned(f);
   }
 }
 
 export function twiceByReference(f: Invocable<[number], number>, n: number): number {
-  return invokeRef(f, n) + invokeRef(f, n);
+  return checkedAdd(invokeRef(f, n), invokeRef(f, n), 'usize');
 }
 

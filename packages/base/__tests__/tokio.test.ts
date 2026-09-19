@@ -70,9 +70,9 @@ async function fatalsRaisedDuring(body: () => Promise<void>): Promise<string[]> 
 // ── Notify ──
 
 describe('Notify', () => {
-  test('notify_one with nobody waiting stores a permit', async () => {
+  test('notifyOne with nobody waiting stores a permit', async () => {
     const notify = new Notify();
-    notify.notify_one();
+    notify.notifyOne();
     const waiter = notify.notified();
     expect(waiter.enable()).toBe(true);
     await waiter;
@@ -81,8 +81,8 @@ describe('Notify', () => {
 
   test('a permit is worth exactly one notification', () => {
     const notify = new Notify();
-    notify.notify_one();
-    notify.notify_one(); // saturates at one, as tokio's does
+    notify.notifyOne();
+    notify.notifyOne(); // saturates at one, as tokio's does
     const first = notify.notified();
     const second = notify.notified();
     expect(first.enable()).toBe(true);
@@ -96,7 +96,7 @@ describe('Notify', () => {
     // The whole reason Notified has a state before "waiting": creating one
     // registers nothing and consumes nothing.
     const notify = new Notify();
-    notify.notify_one();
+    notify.notifyOne();
     const created_first = notify.notified();
     const created_second = notify.notified();
     expect(created_second.enable()).toBe(true);
@@ -106,11 +106,11 @@ describe('Notify', () => {
     notify.drop();
   });
 
-  test('notify_one stores a permit when the waiters that exist have not been polled', () => {
+  test('notifyOne stores a permit when the waiters that exist have not been polled', () => {
     const notify = new Notify();
     const first = notify.notified();
     const second = notify.notified();
-    notify.notify_one(); // neither is in the queue, so this is stored
+    notify.notifyOne(); // neither is in the queue, so this is stored
     expect(second.enable()).toBe(true);
     expect(first.enable()).toBe(false);
     first.drop();
@@ -118,22 +118,22 @@ describe('Notify', () => {
     notify.drop();
   });
 
-  test('notify_waiters stores nothing', () => {
+  test('notifyWaiters stores nothing', () => {
     const notify = new Notify();
-    notify.notify_waiters();
+    notify.notifyWaiters();
     const waiter = notify.notified();
     expect(waiter.enable()).toBe(false);
     waiter.drop();
     notify.drop();
   });
 
-  test('notify_one wakes the waiter that has been queued longest', () => {
+  test('notifyOne wakes the waiter that has been queued longest', () => {
     const notify = new Notify();
     const first = notify.notified();
     const second = notify.notified();
     first.enable();
     second.enable();
-    notify.notify_one();
+    notify.notifyOne();
     expect(first.enable()).toBe(true);
     expect(second.enable()).toBe(false);
     second.drop();
@@ -141,13 +141,13 @@ describe('Notify', () => {
     notify.drop();
   });
 
-  test('notify_last wakes the most recently queued waiter', () => {
+  test('notifyLast wakes the most recently queued waiter', () => {
     const notify = new Notify();
     const first = notify.notified();
     const second = notify.notified();
     first.enable();
     second.enable();
-    notify.notify_last();
+    notify.notifyLast();
     expect(first.enable()).toBe(false);
     expect(second.enable()).toBe(true);
     second.drop();
@@ -155,7 +155,7 @@ describe('Notify', () => {
     notify.drop();
   });
 
-  test('notify_waiters wakes everyone queued now', async () => {
+  test('notifyWaiters wakes everyone queued now', async () => {
     const notify = new Notify();
     const woken: string[] = [];
     const first = notify.notified();
@@ -163,7 +163,7 @@ describe('Notify', () => {
     const secondDone = (async () => { await second; woken.push('second'); })();
     const firstDone = (async () => { await first; woken.push('first'); })();
     await turns(1); // let both awaits poll, which is what queues them
-    notify.notify_waiters();
+    notify.notifyWaiters();
     await Promise.all([firstDone, secondDone]);
     expect(woken.sort()).toEqual(['first', 'second']);
     notify.drop();
@@ -171,11 +171,11 @@ describe('Notify', () => {
 
   test('a broadcast between creating a waiter and awaiting it is not missed', async () => {
     // The generation recorded at construction is what catches this: the first
-    // poll sees a notify_waiters it does not recognise and completes at once.
+    // poll sees a notifyWaiters it does not recognise and completes at once.
     const notify = new Notify();
     const waiter = notify.notified();
     await sleep(0);
-    notify.notify_waiters();
+    notify.notifyWaiters();
     await waiter;
     notify.drop();
   });
@@ -185,44 +185,44 @@ describe('Notify', () => {
     const waiter = notify.notified();
     waiter.enable();
     waiter.drop();
-    notify.notify_one(); // nobody is queued any more, so this is stored
+    notify.notifyOne(); // nobody is queued any more, so this is stored
     const later = notify.notified();
     expect(later.enable()).toBe(true);
     later.drop();
     notify.drop();
   });
 
-  test('a notify_one nobody received is handed to the next waiter', () => {
+  test('a notifyOne nobody received is handed to the next waiter', () => {
     const notify = new Notify();
     const first = notify.notified();
     const second = notify.notified();
     first.enable();
     second.enable();
-    notify.notify_one(); // picks first
+    notify.notifyOne(); // picks first
     first.drop();        // ... which never received it, so second gets it
     expect(second.enable()).toBe(true);
     second.drop();
     notify.drop();
   });
 
-  test('a notify_last nobody received is handed on by the same strategy', () => {
+  test('a notifyLast nobody received is handed on by the same strategy', () => {
     const notify = new Notify();
     const first = notify.notified();
     const second = notify.notified();
     first.enable();
     second.enable();
-    notify.notify_last(); // picks second
+    notify.notifyLast(); // picks second
     second.drop();
     expect(first.enable()).toBe(true);
     first.drop();
     notify.drop();
   });
 
-  test('a notify_one nobody received becomes a permit when nobody is left', async () => {
+  test('a notifyOne nobody received becomes a permit when nobody is left', async () => {
     const notify = new Notify();
     const waiter = notify.notified();
     waiter.enable();
-    notify.notify_one();
+    notify.notifyOne();
     waiter.drop();
     const later = notify.notified();
     expect(later.enable()).toBe(true);
@@ -231,12 +231,12 @@ describe('Notify', () => {
   });
 
   test('a broadcast wake is never handed on', () => {
-    // notify_waiters was for everyone at once; there is no notification owed to
+    // notifyWaiters was for everyone at once; there is no notification owed to
     // anybody after it, so dropping a woken waiter leaves nothing behind.
     const notify = new Notify();
     const waiter = notify.notified();
     waiter.enable();
-    notify.notify_waiters();
+    notify.notifyWaiters();
     waiter.drop();
     const later = notify.notified();
     expect(later.enable()).toBe(false);
@@ -264,7 +264,7 @@ describe('Named futures', () => {
     const [tx, rx] = oneshot.channel<number>();
     tx.send(1).drop();
     expect((await rx).unwrap()).toBe(1);
-    expectFatal(() => rx.try_recv(), 'BUG: oneshot::Receiver was used after being moved');
+    expectFatal(() => rx.tryRecv(), 'BUG: oneshot::Receiver was used after being moved');
     expectFatal(() => rx.drop(), 'BUG: oneshot::Receiver was used after being moved');
   });
 
@@ -280,7 +280,7 @@ describe('Named futures', () => {
   test('a JoinHandle is consumed by the await too', async () => {
     const handle = spawn(async () => 1);
     (await handle).unwrap();
-    expectFatal(() => handle.is_finished(), 'BUG: JoinHandle was used after being moved');
+    expectFatal(() => handle.isFinished(), 'BUG: JoinHandle was used after being moved');
   });
 });
 
@@ -319,22 +319,22 @@ describe('oneshot', () => {
     received.unwrapErr().drop();
   });
 
-  test('try_recv reports Empty while the sender lives and Closed once it is gone', () => {
+  test('tryRecv reports Empty while the sender lives and Closed once it is gone', () => {
     const [tx, rx] = oneshot.channel<number>();
-    const empty = rx.try_recv().unwrapErr();
+    const empty = rx.tryRecv().unwrapErr();
     expect(empty.match({ Empty: () => 'empty', Closed: () => 'closed' })).toBe('empty');
     empty.drop();
     tx.drop();
-    const closed = rx.try_recv().unwrapErr();
+    const closed = rx.tryRecv().unwrapErr();
     expect(closed.match({ Empty: () => 'empty', Closed: () => 'closed' })).toBe('closed');
     closed.drop();
     rx.drop();
   });
 
-  test('try_recv takes a value the sender already put in', () => {
+  test('tryRecv takes a value the sender already put in', () => {
     const [tx, rx] = oneshot.channel<number>();
     tx.send(3).drop();
-    expect(rx.try_recv().unwrap()).toBe(3);
+    expect(rx.tryRecv().unwrap()).toBe(3);
     rx.drop();
   });
 
@@ -355,7 +355,7 @@ describe('oneshot', () => {
     rx.drop();
     await watching;
     expect(sawClose).toBe(true);
-    expect(tx.is_closed()).toBe(true);
+    expect(tx.isClosed()).toBe(true);
     tx.drop();
   });
 });
@@ -405,14 +405,14 @@ describe('mpsc', () => {
     rx.drop();
   });
 
-  test('try_send reports Full and Closed, with the value handed back', () => {
+  test('trySend reports Full and Closed, with the value handed back', () => {
     const [tx, rx] = mpsc.channel<number>(1);
-    tx.try_send(1).unwrap();
-    const full = tx.try_send(2).unwrapErr();
+    tx.trySend(1).unwrap();
+    const full = tx.trySend(2).unwrapErr();
     expect(full.match({ Full: (v) => v._0, Closed: () => -1 })).toBe(2);
     full.drop();
     rx.drop();
-    const closed = tx.try_send(3).unwrapErr();
+    const closed = tx.trySend(3).unwrapErr();
     expect(closed.match({ Full: () => -1, Closed: (v) => v._0 })).toBe(3);
     closed.drop();
     tx.drop();
@@ -435,7 +435,7 @@ describe('mpsc', () => {
     const failed = (await tx.send(5)).unwrapErr();
     expect(failed._0).toBe(5);
     failed.drop();
-    expect(tx.is_closed()).toBe(true);
+    expect(tx.isClosed()).toBe(true);
     tx.drop();
   });
 
@@ -470,13 +470,13 @@ describe('mpsc', () => {
     rx.drop();
   });
 
-  test('try_recv reports Empty then Disconnected', () => {
+  test('tryRecv reports Empty then Disconnected', () => {
     const [tx, rx] = mpsc.unbounded_channel<number>();
-    const empty = rx.try_recv().unwrapErr();
+    const empty = rx.tryRecv().unwrapErr();
     expect(empty.match({ Empty: () => 'empty', Disconnected: () => 'gone' })).toBe('empty');
     empty.drop();
     tx.drop();
-    const gone = rx.try_recv().unwrapErr();
+    const gone = rx.tryRecv().unwrapErr();
     expect(gone.match({ Empty: () => 'empty', Disconnected: () => 'gone' })).toBe('gone');
     gone.drop();
     rx.drop();
@@ -609,7 +609,7 @@ describe('select', () => {
     ]);
     expect(winner.tag).toBe('tick');
     waiter.drop();
-    notify.notify_one(); // nobody queued, so this is stored
+    notify.notifyOne(); // nobody queued, so this is stored
     const later = notify.notified();
     expect(later.enable()).toBe(true);
     later.drop();
@@ -640,11 +640,11 @@ describe('spawn', () => {
     expect((await handle).unwrap()).toBe('running');
   });
 
-  test('is_finished reports the handle, which abort settles at once', async () => {
+  test('isFinished reports the handle, which abort settles at once', async () => {
     const handle = spawn(async () => { await sleep(5); return 1; });
-    expect(handle.is_finished()).toBe(false);
+    expect(handle.isFinished()).toBe(false);
     handle.abort();
-    expect(handle.is_finished()).toBe(true);
+    expect(handle.isFinished()).toBe(true);
     (await handle).unwrapErr().drop();
   });
 
@@ -986,7 +986,7 @@ describe('AsyncMutex', () => {
 describe('tokio namespace', () => {
   test('the module tree mirrors the crate, so a path rewrite is the whole mapping', async () => {
     const notify = new tokio.sync.Notify();
-    notify.notify_one();
+    notify.notifyOne();
     await notify.notified();
     notify.drop();
 

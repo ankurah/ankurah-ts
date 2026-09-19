@@ -129,7 +129,7 @@ export class JoinHandle<T> extends NamedFuture<Result<T, JoinError>> {
    * on the handle, so it is true straight after abort() while the task body is
    * still running.
    */
-  is_finished(): boolean {
+  isFinished(): boolean {
     this.assertNotDropped();
     return this.isSettled();
   }

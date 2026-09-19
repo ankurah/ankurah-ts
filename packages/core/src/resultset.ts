@@ -52,7 +52,7 @@ export class EntityResultSet<E extends AbstractEntity = Entity> extends Struct i
 
   static single<E>(entity: E): EntityResultSet<E> {
     let _moved0 = false;
-    const entry = new EntityEntry(entity.clone(), null, false);
+    const entry = new EntityEntry(derivedClone(entity), null, false);
     try {
       _moved0 = true;
       let _moved1 = false;
@@ -129,7 +129,7 @@ export class EntityResultSet<E extends AbstractEntity = Entity> extends Struct i
     const st = this._0.value.state.lock();
     try {
       const _m0 = st.value.index.get(id);
-      return (_m0 != null ? ((i) => st.value.order[i].entity.clone())(_m0!) : null);
+      return (_m0 != null ? ((i) => derivedClone(st.value.order[i].entity))(_m0!) : null);
     } finally {
       st.drop();
     }
@@ -176,7 +176,7 @@ export class EntityResultSet<E extends AbstractEntity = Entity> extends Struct i
     const st = this._0.value.state.lock();
     try {
       const _m0 = iterLast(st.value.order);
-      return (_m0 != null ? ((entry) => entry.entity.clone())(_m0!) : null);
+      return (_m0 != null ? ((entry) => derivedClone(entry.entity))(_m0!) : null);
     } finally {
       st.drop();
     }

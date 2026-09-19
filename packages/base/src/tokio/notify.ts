@@ -3,20 +3,20 @@
 //
 // Notify is how the port's readiness gates are written: `system.rs` and
 // `livequery.rs` both park on `notified()` until whoever finishes the work calls
-// `notify_waiters()`. Everything here exists to make that handshake impossible
+// `notifyWaiters()`. Everything here exists to make that handshake impossible
 // to lose.
 //
 // The three states a `Notified` moves through are tokio's, and the distinction
 // between them is the whole design:
 //
 //   created — it has recorded the broadcast generation and nothing else. It is
-//             not in the queue, so `notify_one()` does not see it.
+//             not in the queue, so `notifyOne()` does not see it.
 //   waiting — its first poll found no broadcast and no permit, so it joined the
-//             queue and can be picked by `notify_one()` / `notify_last()`.
+//             queue and can be picked by `notifyOne()` / `notifyLast()`.
 //   done    — it has its notification.
 //
 // A `Notified` therefore does not consume a stored permit when it is created,
-// only when it is first polled or enabled. `notify_one(); const a = notified();
+// only when it is first polled or enabled. `notifyOne(); const a = notified();
 // const b = notified(); b.enable()` gives the permit to `b`, because `a` was
 // never polled — and wake order among queued waiters is poll order, not
 // creation order.
@@ -27,19 +27,19 @@ import { NamedFuture } from './future.ts';
 
 /**
  * How a wake reached a waiter. The distinction matters on drop: tokio hands an
- * unreceived `notify_one` / `notify_last` on to the next waiter, because that
+ * unreceived `notifyOne` / `notifyLast` on to the next waiter, because that
  * notification was for exactly one task and dropping it would lose it. A
- * `notify_waiters` broadcast was for everyone at once and is never forwarded.
+ * `notifyWaiters` broadcast was for everyone at once and is never forwarded.
  */
 type WakeKind = 'one-fifo' | 'one-lifo' | 'all';
 
 /**
  * The future `Notify::notified()` hands back.
  *
- * It records the broadcast generation at construction, so a `notify_waiters()`
+ * It records the broadcast generation at construction, so a `notifyWaiters()`
  * between creating it and awaiting it still completes it — that is what makes
  * `const n = notify.notified(); await doThing(); await n;` safe. It joins the
- * `notify_one` queue only when first polled.
+ * `notifyOne` queue only when first polled.
  */
 export class Notified extends NamedFuture<void> {
   readonly #notify: Notify;
@@ -104,17 +104,17 @@ export class Notified extends NamedFuture<void> {
     // This waiter was given a one-at-a-time notification and never received it.
     // Dropping it here would lose the notification outright, so it goes on to
     // the next waiter by the same strategy, or becomes a stored permit.
-    if (forward === 'one-fifo') this.#notify.notify_one();
-    else this.#notify.notify_last();
+    if (forward === 'one-fifo') this.#notify.notifyOne();
+    else this.#notify.notifyLast();
   }
 }
 
 /**
  * tokio::sync::Notify — a wake-up with no payload.
  *
- * It holds at most one permit: `notify_one()` with nobody in the queue stores
+ * It holds at most one permit: `notifyOne()` with nobody in the queue stores
  * it, so the next waiter to be polled completes immediately instead of parking
- * forever. `notify_waiters()` is the other half of the pair — it wakes everyone
+ * forever. `notifyWaiters()` is the other half of the pair — it wakes everyone
  * queued right now, bumps the generation so a waiter created before it but not
  * yet polled also completes, and stores nothing.
  */
@@ -140,7 +140,7 @@ export class Notify {
   }
 
   /** Wake the waiter that has been queued longest, or store a permit. */
-  notify_one(): void {
+  notifyOne(): void {
     this.#guard.assertNotDropped();
     const waiter = this.#waiters.shift();
     if (waiter === undefined) {
@@ -151,7 +151,7 @@ export class Notify {
   }
 
   /** Wake the most recently queued waiter, or store a permit. */
-  notify_last(): void {
+  notifyLast(): void {
     this.#guard.assertNotDropped();
     const waiter = this.#waiters.pop();
     if (waiter === undefined) {
@@ -167,7 +167,7 @@ export class Notify {
    * yet: its first poll sees a generation it does not recognise and completes.
    * A waiter created after this call waits for the next notification.
    */
-  notify_waiters(): void {
+  notifyWaiters(): void {
     this.#guard.assertNotDropped();
     this.#generation++;
     const woken = this.#waiters.splice(0, this.#waiters.length);

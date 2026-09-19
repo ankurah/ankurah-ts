@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/signals/src/signal/map.rs
-import { Struct, Arc, OwnedClosure, invoke, invokeRef, Invocable } from '@ankurah/base';
+import { Struct, Arc, OwnedClosure, invoke, invokeRef, Invocable, derivedClone } from '@ankurah/base';
 import { BroadcastId } from '../broadcast';
 import { CurrentObserver } from '../context';
 import { IntoSubscribeListener_dispatch_intoSubscribeListener, Subscribe, SubscriptionGuard } from '../porcelain/subscribe';
@@ -20,7 +20,7 @@ export class Map<Upstream extends Signal & With<Input> & Clone, Input, Output ex
   }
 
   clone(): Map<Upstream, Input, Output, Transform> {
-    return new Map(this.source.clone(), this.transform.clone(), undefined /* PhantomData */);
+    return new Map(derivedClone(this.source), derivedClone(this.transform), undefined /* PhantomData */);
   }
 
   listen(listener: Listener): ListenerGuard {
@@ -50,8 +50,8 @@ export class Map<Upstream extends Signal & With<Input> & Clone, Input, Output ex
 
   subscribe<L>(listener: L): SubscriptionGuard {
     const listener_1 = IntoSubscribeListener_dispatch_intoSubscribeListener(listener);
-    const source = this.source.clone();
-    const transform = this.transform.clone();
+    const source = derivedClone(this.source);
+    const transform = derivedClone(this.transform);
     const subscription = this.source.listen(Arc.new(new OwnedClosure([listener_1], (_) => {
       source.with((input) => {
         invokeRef(listener_1, invokeRef(transform, input));

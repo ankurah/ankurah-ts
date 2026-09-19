@@ -142,7 +142,7 @@ abstract class ChannelSender<T> extends Drop {
   }
 
   /** Whether the receiving half is gone, so a send would fail. */
-  is_closed(): boolean {
+  isClosed(): boolean {
     this.assertNotDropped();
     return this.core.closed;
   }
@@ -189,7 +189,7 @@ abstract class ChannelReceiver<T> extends Drop {
    * The next message without waiting. `Empty` means a sender is still out
    * there and may yet send; `Disconnected` means none will.
    */
-  try_recv(): Result<T, TryRecvError> {
+  tryRecv(): Result<T, TryRecvError> {
     this.assertNotDropped();
     if (this.core.buffer.length > 0) return Result.Ok(this.core.takeBuffered());
     if (this.core.drained) return Result.Err(TryRecvError.Disconnected());
@@ -250,7 +250,7 @@ export class Sender<T> extends ChannelSender<T> {
   }
 
   /** Send only if there is room right now. */
-  try_send(value: T): Result<undefined, TrySendError<T>> {
+  trySend(value: T): Result<undefined, TrySendError<T>> {
     this.assertNotDropped();
     if (this.core.closed) return Result.Err(TrySendError.Closed(value));
     if (!this.core.canAccept()) return Result.Err(TrySendError.Full(value));

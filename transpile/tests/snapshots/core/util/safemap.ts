@@ -115,11 +115,11 @@ export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Defa
       return _t0.value.entry(k).match({
         Occupied: (v) => {
           const o = v._0;
-          return o.get().clone();
+          return derivedClone(o.get());
         },
         Vacant: (_v) => {
           const v = _v._0;
-          return v.insert(Default.default()).clone();
+          return derivedClone(v.insert(Default.default()));
         },
       });
     } finally {
@@ -130,7 +130,7 @@ export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Defa
   toVec(): [K, V][] {
     const _t0 = this._0.read();
     try {
-      return [..._t0.value].map(([k, v]) => [k.clone(), v.clone()]);
+      return [..._t0.value].map(([k, v]) => [derivedClone(k), derivedClone(v)]);
     } finally {
       _t0.drop();
     }

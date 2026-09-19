@@ -103,7 +103,33 @@ impl BodyTranslator<'_> {
         }
     }
 
+    /// A path standing where a VALUE stands.
+    ///
+    /// A tuple struct's name is its constructor function, and Rust hands that
+    /// function to `map` as a value. A class is not callable without `new`, so
+    /// `self.0.upgrade().map(CallbackObserver)` came out `(CallbackObserver)(x)`
+    /// and every JavaScript engine refuses it. The value is an arrow that
+    /// constructs, one parameter per field.
     pub(crate) fn path_expr(&self, path: &syn::Path) -> String {
+        let written = self.path_name(path);
+        let Some(arity) = self.tuple_struct_arity(path) else { return written };
+        let params: Vec<String> =
+            (0..arity).map(|at| format!("_{}", at)).collect::<Vec<_>>();
+        let params = params.join(", ");
+        format!("(({}) => new {}({}))", params, written, params)
+    }
+
+    /// The callee of a call, which is the one place a tuple struct's name is
+    /// not a value standing for the constructor but the construction itself:
+    /// `Wrapper(n)` is `new Wrapper(n)`, written where the call is.
+    pub(crate) fn callee(&self, func: &syn::Expr) -> String {
+        match func {
+            syn::Expr::Path(path) if path.qself.is_none() => self.path_name(&path.path),
+            other => self.expr(other),
+        }
+    }
+
+    fn path_name(&self, path: &syn::Path) -> String {
         // A path of one segment is a name — a local, a parameter, a free
         // function — and never a module qualifier. Filtering it as one deleted
         // every local called `ops`, `iter` or `fmt`: `ops.iter()` came out as
@@ -268,6 +294,32 @@ impl BodyTranslator<'_> {
         tc.registry
             .def(id)
             .is_some_and(|def| def.constructor == Some(crate::types::Constructor::Braced))
+    }
+
+    /// How many fields this path's tuple struct takes, where the path names one
+    /// and nothing in scope shadows the name.
+    ///
+    /// The arity is the declaration order, which is what the emitted
+    /// constructor's parameters are written from, so the arrow this answers for
+    /// takes exactly the arguments the class does.
+    fn tuple_struct_arity(&self, path: &syn::Path) -> Option<usize> {
+        let [segment] = &path.segments.iter().collect::<Vec<_>>()[..] else { return None };
+        let name = segment.ident.to_string();
+        if self.names_a_local(&name) {
+            return None;
+        }
+        let tc = self.types.as_ref()?;
+        let tc = tc.borrow();
+        let Ok(Some(crate::registry::Def::Type(id))) =
+            tc.registry.lookup_type(tc.module, &[name])
+        else {
+            return None;
+        };
+        let def = tc.registry.def(id)?;
+        match def.constructor == Some(crate::types::Constructor::Tuple) {
+            true => Some(def.field_order.len()),
+            false => None,
+        }
     }
 
     fn names_a_unit_struct(&self, name: &str) -> bool {

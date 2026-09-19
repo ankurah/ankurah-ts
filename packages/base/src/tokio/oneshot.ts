@@ -84,7 +84,7 @@ export class Sender<T> extends Drop {
   }
 
   /** Whether the receiving half is gone, so a send would fail. */
-  is_closed(): boolean {
+  isClosed(): boolean {
     this.assertNotDropped();
     return this.#state.receiverClosed;
   }
@@ -128,7 +128,7 @@ export class Receiver<T> extends NamedFuture<Result<T, RecvError>> {
    * Take the value without waiting. `Empty` means the sender still exists and
    * has not sent; `Closed` means it never will.
    */
-  try_recv(): Result<T, TryRecvError> {
+  tryRecv(): Result<T, TryRecvError> {
     this.assertNotDropped();
     const state = this.#state;
     if (state.hasValue) {

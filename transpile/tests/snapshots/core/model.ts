@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/model.rs
-import { Struct, Result, Arc, OwnedClosure, invokeRef } from '@ankurah/base';
+import { Struct, Result, Arc, OwnedClosure, invokeRef, derivedClone } from '@ankurah/base';
 import { CollectionId, EntityId, State } from '@ankurah/proto';
 import { Entity } from './entity';
 import { SubscriptionGuard } from '@ankurah/signals';
@@ -89,9 +89,9 @@ export abstract class Mutable {
 
 export function viewSubscribe<V, F>(view: V, listener: F): SubscriptionGuard {
   const listener_1 = IntoSubscribeListener_dispatch_intoSubscribeListener(listener);
-  const viewClone = view.clone();
+  const viewClone = derivedClone(view);
   const subscription = view.listen(Arc.new(new OwnedClosure([listener_1], (_) => {
-    invokeRef(listener_1, viewClone.clone());
+    invokeRef(listener_1, derivedClone(viewClone));
   })));
   return SubscriptionGuard.new(subscription);
 }

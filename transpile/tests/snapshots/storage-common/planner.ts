@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/common/src/planner.rs
-import { Struct, dropOwned, unsupported, iterFind, iterFindMap, iterFirst, iterFirstOwned, skipOwned, HashSet } from '@ankurah/base';
+import { Struct, dropOwned, derivedClone, unsupported, iterFind, iterFindMap, iterFirst, iterFirstOwned, skipOwned, HashSet } from '@ankurah/base';
 import { ComparisonOperator, Predicate, OrderByItem, Selection } from '@ankurah/ankql';
 import { IndexKeyPart, KeySpec, Value, ValueType } from '@ankurah/core';
 import { ConjunctFinder } from './predicate';
@@ -686,9 +686,9 @@ export class Planner extends Struct {
           if (_v1 != null) {
             const value = _v1;
             let _moved3 = false;
-            const _b2 = Endpoint.incl(value.clone());
+            const _b2 = Endpoint.incl(derivedClone(value));
             try {
-              const _b4 = Endpoint.incl(value.clone());
+              const _b4 = Endpoint.incl(derivedClone(value));
               _moved3 = true;
               keypartBounds.push(new KeyBoundComponent(fullPath, _b2, _b4));
             } finally {

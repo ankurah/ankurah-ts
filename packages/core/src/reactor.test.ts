@@ -195,19 +195,24 @@ describe('reactor unit tests', () => {
                       _moved2 = true;
                       _moved3 = true;
                       (await reactor.addQueryAndNotify(_b4, queryId, collectionId, selection, mockNode, resultset, mockGapFetcher, [])).unwrap();
-                      let _moved6 = false;
-                      const _b5 = entity1.clone();
+                      const _t5 = invokeRef(check);
                       try {
-                        const _b7 = [[queryId, new MembershipChange('Initial', {})]];
-                        const _t8 = [new ReactorUpdate([new ReactorUpdateItem(_b5, [], _b7)])];
+                        let _moved7 = false;
+                        const _b6 = entity1.clone();
                         try {
-                          _moved6 = true;
-                          expect(invokeRef(check)).toEqual(_t8);
+                          const _b8 = [[queryId, new MembershipChange('Initial', {})]];
+                          const _t9 = [new ReactorUpdate([new ReactorUpdateItem(_b6, [], _b8)])];
+                          try {
+                            _moved7 = true;
+                            expect(_t5).toEqual(_t9);
+                          } finally {
+                            dropOwned(_t9);
+                          }
                         } finally {
-                          dropOwned(_t8);
+                          if (!_moved7) dropOwned(_b6);
                         }
                       } finally {
-                        if (!_moved6) dropOwned(_b5);
+                        dropOwned(_t5);
                       }
                     } finally {
                       mockNode.drop();

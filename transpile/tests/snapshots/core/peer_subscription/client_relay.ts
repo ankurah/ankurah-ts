@@ -1,8 +1,8 @@
 // MIRRORS: ankurah/core/src/peer_subscription/client_relay.rs
-import { Struct, Enum, Result, Arc, Mutex, AnyhowError, dropOwned, tracing, iterFilterMap, HashMap, HashSet, tokio, select, spawn, Sender, Receiver } from '@ankurah/base';
+import { Struct, Enum, Result, Arc, Mutex, AnyhowError, dropOwned, derivedClone, tracing, iterFilterMap, HashMap, HashSet, tokio, select, spawn, Sender, Receiver } from '@ankurah/base';
 import { CollectionId, EntityId, KnownEntity, NodeRequestBody, NodeResponseBody, QueryId } from '@ankurah/proto';
 import { RequestError, RetrievalError } from '../error';
-import { ContextData } from '../node';
+import { ContextData, WeakNode } from '../node';
 import { NodeApplier } from '../node_applier';
 import { EphemeralNodeRetriever } from '../retrieval';
 import { spawn } from '../task';
@@ -150,7 +150,7 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
                   let _moved5 = false;
                   const _b4 = selection.clone();
                   try {
-                    const _b6 = oldContent.value.contextData.clone();
+                    const _b6 = derivedClone(oldContent.value.contextData);
                     const _a1 = Arc.new(new Content(oldContent.value.queryId, _b2, _b4, _b6, version));
                     state.content.drop();
                     _moved3 = true;
@@ -178,7 +178,7 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
                     let _moved11 = false;
                     const _b10 = state.content.value.collectionId.clone();
                     try {
-                      const _b12 = state.content.value.contextData.clone();
+                      const _b12 = derivedClone(state.content.value.contextData);
                       _moved11 = true;
                       return [peerId, _b10, _b12];
                     } finally {
@@ -237,7 +237,7 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
                 const _t2 = me.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
                 try {
                   const _m3 = _t2.value.get(queryId);
-                  const livequery = (_m3 != null ? ((state) => state.livequery.clone())(_m3!) : null);
+                  const livequery = (_m3 != null ? ((state) => derivedClone(state.livequery))(_m3!) : null);
                   _t2.drop();
                   _moved0 = true;
                   _moved1 = true;
@@ -398,13 +398,13 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
           Established: (v) => {
             const establishedPeer = v._0;
             if (establishedPeer.equals(peerId)) {
-              contexts.add(state.content.value.contextData.clone());
+              contexts.add(derivedClone(state.content.value.contextData));
             }
           },
           Requested: (v) => {
             const establishedPeer = v._0;
             if (establishedPeer.equals(peerId)) {
-              contexts.add(state.content.value.contextData.clone());
+              contexts.add(derivedClone(state.content.value.contextData));
             }
           },
           PendingRemote: () => {},
@@ -475,12 +475,12 @@ export class SubscriptionRelay<CD extends ContextData, Q extends RemoteQuerySubs
           let _moved0 = false;
           const predicate = content.value.selection.clone();
           try {
-            const contextData = content.value.contextData.clone();
+            const contextData = derivedClone(content.value.contextData);
             const version = content.value.version;
             const _t1 = this.inner.value.subscriptions.lock().unwrapOrElse((e) => e.intoInner());
             try {
               const _m2 = _t1.value.get(queryId);
-              const livequery = (_m2 != null ? ((state) => state.livequery.clone())(_m2!) : null);
+              const livequery = (_m2 != null ? ((state) => derivedClone(state.livequery))(_m2!) : null);
               _t1.drop();
               const _b3 = content.value.collectionId.clone();
               _moved0 = true;

@@ -265,7 +265,7 @@ impl<'a> BodyTranslator<'a> {
                         call.args.iter().map(|a| self.moved_value(a)).collect();
                     return format!("({})({})", arrow, args.join(", "));
                 }
-                let func = self.expr(&call.func);
+                let func = self.callee(&call.func);
                 // A CALLEE is a postfix base like any other: `get_function()
                 // .await(8)` came out `await getFunction()(8)`, which calls the
                 // promise.

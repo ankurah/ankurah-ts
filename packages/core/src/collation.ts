@@ -1,6 +1,9 @@
 // MIRRORS: ankurah/core/src/collation.rs
 import { Enum, serde_json, derivedEquals, derivedClone, checkedAdd, checkedSub, range } from '@ankurah/base';
 import { EntityId } from '@ankurah/proto';
+import { Value_predecessorBytes, Value_successorBytes, Value_toBytes } from './value/collatable';
+import { Value } from './value/index';
+import { Literal } from '@ankurah/ankql';
 
 export type RangeBoundV<T> = {
   Included: { _0: T };
@@ -56,31 +59,31 @@ export abstract class Collatable {
     if ((_v[0].is('Included')) && (_v[1].is('Included'))) {
       const { _0: l } = _v[0].value;
       const { _0: u } = _v[1].value;
-      return Collatable_dispatch_compare(this, l) !== -1 && Collatable_dispatch_compare(this, u) !== 1;
+      return this.compare(l) !== -1 && this.compare(u) !== 1;
     } else if ((_v[0].is('Included')) && (_v[1].is('Excluded'))) {
       const { _0: l } = _v[0].value;
       const { _0: u } = _v[1].value;
-      return Collatable_dispatch_compare(this, l) !== -1 && Collatable_dispatch_compare(this, u) === -1;
+      return this.compare(l) !== -1 && this.compare(u) === -1;
     } else if ((_v[0].is('Excluded')) && (_v[1].is('Included'))) {
       const { _0: l } = _v[0].value;
       const { _0: u } = _v[1].value;
-      return Collatable_dispatch_compare(this, l) === 1 && Collatable_dispatch_compare(this, u) !== 1;
+      return this.compare(l) === 1 && this.compare(u) !== 1;
     } else if ((_v[0].is('Excluded')) && (_v[1].is('Excluded'))) {
       const { _0: l } = _v[0].value;
       const { _0: u } = _v[1].value;
-      return Collatable_dispatch_compare(this, l) === 1 && Collatable_dispatch_compare(this, u) === -1;
+      return this.compare(l) === 1 && this.compare(u) === -1;
     } else if ((_v[0].is('Unbounded')) && (_v[1].is('Included'))) {
       const { _0: u } = _v[1].value;
-      return Collatable_dispatch_compare(this, u) !== 1;
+      return this.compare(u) !== 1;
     } else if ((_v[0].is('Unbounded')) && (_v[1].is('Excluded'))) {
       const { _0: u } = _v[1].value;
-      return Collatable_dispatch_compare(this, u) === -1;
+      return this.compare(u) === -1;
     } else if ((_v[0].is('Included')) && (_v[1].is('Unbounded'))) {
       const { _0: l } = _v[0].value;
-      return Collatable_dispatch_compare(this, l) !== -1;
+      return this.compare(l) !== -1;
     } else if ((_v[0].is('Excluded')) && (_v[1].is('Unbounded'))) {
       const { _0: l } = _v[0].value;
-      return Collatable_dispatch_compare(this, l) === 1;
+      return this.compare(l) === 1;
     } else {
       return true;
     }
@@ -595,15 +598,11 @@ export function EntityId_isMaximum(self: EntityId): boolean {
   return [...self.toBytes()].every((b) => b === 255);
 }
 
-export function Collatable_dispatch_compare(self: unknown, other: Self): number {
-  if (self instanceof Literal) return Literal_compare(self as any, other);
-  if (self instanceof EntityId) return EntityId_compare(self as any, other);
-  if (self instanceof Value) return Value_compare(self as any, other);
-  throw new Error(`BUG: no Collatable impl for ${(self as object)?.constructor?.name ?? typeof self}`);
-}
-
 export function Collatable_dispatch_predecessorBytes(self: unknown): Uint8Array | null {
   if (self instanceof Literal) return Literal_predecessorBytes(self as any);
+  if (typeof self === 'string') return Str_predecessorBytes(self as any);
+  if (typeof self === 'bigint') return I64_predecessorBytes(self as any);
+  if (typeof self === 'number') return F64_predecessorBytes(self as any);
   if (self instanceof EntityId) return EntityId_predecessorBytes(self as any);
   if (self instanceof Value) return Value_predecessorBytes(self as any);
   throw new Error(`BUG: no Collatable impl for ${(self as object)?.constructor?.name ?? typeof self}`);
@@ -611,6 +610,9 @@ export function Collatable_dispatch_predecessorBytes(self: unknown): Uint8Array 
 
 export function Collatable_dispatch_successorBytes(self: unknown): Uint8Array | null {
   if (self instanceof Literal) return Literal_successorBytes(self as any);
+  if (typeof self === 'string') return Str_successorBytes(self as any);
+  if (typeof self === 'bigint') return I64_successorBytes(self as any);
+  if (typeof self === 'number') return F64_successorBytes(self as any);
   if (self instanceof EntityId) return EntityId_successorBytes(self as any);
   if (self instanceof Value) return Value_successorBytes(self as any);
   throw new Error(`BUG: no Collatable impl for ${(self as object)?.constructor?.name ?? typeof self}`);
@@ -618,6 +620,9 @@ export function Collatable_dispatch_successorBytes(self: unknown): Uint8Array | 
 
 export function Collatable_dispatch_toBytes(self: unknown): Uint8Array {
   if (self instanceof Literal) return Literal_toBytes(self as any);
+  if (typeof self === 'string') return Str_toBytes(self as any);
+  if (typeof self === 'bigint') return I64_toBytes(self as any);
+  if (typeof self === 'number') return F64_toBytes(self as any);
   if (self instanceof EntityId) return EntityId_toBytes(self as any);
   if (self instanceof Value) return Value_toBytes(self as any);
   throw new Error(`BUG: no Collatable impl for ${(self as object)?.constructor?.name ?? typeof self}`);

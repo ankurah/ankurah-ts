@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/node.rs
-import { Struct, Drop, Result, Arc, Weak, AnyhowError, dropOwned, OwnershipFatal, UnsupportedShape, tracing, dropUnbound, debugString, HashMap, oneshot, spawn } from '@ankurah/base';
+import { Struct, Drop, Result, Arc, Weak, AnyhowError, dropOwned, OwnershipFatal, UnsupportedShape, derivedClone, tracing, dropUnbound, debugString, HashMap, oneshot, spawn } from '@ankurah/base';
 import { Attested, CollectionId, EntityState, Clock, DeltaContent, EntityDelta, EntityId, Event, NodeMessage, NodeRequest, NodeRequestBody, NodeResponse, NodeResponseBody, NodeUpdate, NodeUpdateAck, NodeUpdateAckBody, NodeUpdateBody, Presence, QueryId, RequestId, StateFragment, TransactionId, UpdateId } from '@ankurah/proto';
 import { EntityChange } from './changes';
 import { CollectionSet } from './collectionset';
@@ -1439,7 +1439,7 @@ export class Node<SE extends StorageEngine, PA extends PolicyAgent> extends Stru
               let _moved3 = false;
               const selection_1 = this.deref().value.typeResolver.resolveSelectionTypes(selection);
               try {
-                this.deref().value.predicateContext.insert(queryId, cdata.clone());
+                this.deref().value.predicateContext.insert(queryId, derivedClone(cdata));
                 _moved0 = true;
                 _moved3 = true;
                 _moved2 = true;
@@ -1582,7 +1582,7 @@ export class WeakNode<SE, PA extends PolicyAgent> extends Struct {
 
   upgrade(): Node<SE, PA> | null {
     const _m0 = this._0.upgrade();
-    return (_m0 != null ? (Node)(_m0!) : null);
+    return (_m0 != null ? (((_0) => new Node(_0)))(_m0!) : null);
   }
 
   clone(): WeakNode<SE, PA> {
