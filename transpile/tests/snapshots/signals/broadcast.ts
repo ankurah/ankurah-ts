@@ -235,13 +235,13 @@ export function Arc_Fn0_intoBroadcastListener<T>(self: Arc<Invocable<[], void>>)
 
 export function UnboundedSender_intoBroadcastListener<T>(self: UnboundedSender<T>): BroadcastListener<T> {
   return new BroadcastListener('Payload', { _0: Arc.new(new OwnedClosure([this], (value) => {
-    const _ = self.send(value);
+    self.send(value).drop();
   })) });
 }
 
 export function Sender_intoBroadcastListener<T>(self: Sender<T>): BroadcastListener<T> {
   return new BroadcastListener('Payload', { _0: Arc.new((value) => {
-    const _ = self.send(value);
+    self.send(value).drop();
   }) });
 }
 

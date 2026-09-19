@@ -34,6 +34,29 @@ fn gated_source(settles_to: &str) -> String {
     )
 }
 
+/// The same source with nothing settling its argument, so the bound is neither
+/// proved nor ruled out and the item the loop was handed is a type of its own.
+fn unsettled_source() -> String {
+    gated_source("Bad").replace("    source.set(Bad);\n", "")
+}
+
+#[test]
+fn an_answer_left_standing_on_an_unsettled_bound_says_so_once() {
+    let mut c = Fixture::build(&[("lib.rs", &unsettled_source())]);
+    let _ = c.emitted("lib.rs");
+    // `&Tag` names no unknown, so the body reads as if the bound held and
+    // nothing else anywhere says what the answer rests on.
+    assert_eq!(
+        c.messages()
+            .iter()
+            .filter(|m| m.contains("which nothing in this body settles"))
+            .count(),
+        1,
+        "{:?}",
+        c.messages()
+    );
+}
+
 #[test]
 fn an_answer_read_through_a_bound_the_solve_falsifies_is_withdrawn() {
     let mut c = Fixture::build(&[("lib.rs", &gated_source("Bad"))]);

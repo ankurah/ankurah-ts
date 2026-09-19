@@ -20,7 +20,7 @@ export class PNBackend extends Struct implements PropertyBackend {
   get(propertyName: PropertyName): PNValue | null {
     const values = this.values.value.read();
     try {
-      return values.value.get(propertyName);
+      return unsupported('this hands back an owned value and `PNValue` has no `clone()` in the port, so what it hands back would be the value the original still owns');
     } finally {
       values.drop();
     }

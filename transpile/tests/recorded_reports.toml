@@ -6,3 +6,4 @@
 #     cd transpile && UPDATE_RECORDED_REPORTS=1 cargo test --test recorded_reports
 
 [records]
+"a_cloned_value_is_not_an_alias" = 2

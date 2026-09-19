@@ -15,7 +15,7 @@
 "ankurah" = 0
 "connector-local" = 0
 "connector-websocket" = 0
-"core" = 17
+"core" = 18
 "proto" = 0
 "signals" = 4
 "storage-common" = 8
@@ -57,6 +57,12 @@ crate = "core"
 file = "property/backend/pn_counter.ts"
 calls = 1
 refusal = "`or_default()` needs the value type's default, and `PNValue` is not declared, so it has no default"
+
+[[hole]]
+crate = "core"
+file = "property/backend/pn_counter.ts"
+calls = 1
+refusal = "this hands back an owned value and `PNValue` has no `clone()` in the port, so what it hands back would be the value the original still owns"
 
 [[hole]]
 crate = "core"

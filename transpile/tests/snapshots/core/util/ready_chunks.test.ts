@@ -34,11 +34,11 @@ describe('ready_chunks unit tests', () => {
     try {
       tokio.spawn((async () => {
         await tokio.time.sleep(time.Duration.fromMillis(10n));
-        const _ = tx1.send(10);
+        tx1.send(10).drop();
       })());
       tokio.spawn((async () => {
         await tokio.time.sleep(time.Duration.fromMillis(30n));
-        const _ = tx2.send(20);
+        tx2.send(20).drop();
       })());
       const first = (await stream.next());
       const values = [...first].map((r) => r);

@@ -45,6 +45,26 @@ impl TypeContext<'_> {
         ))
     }
 
+    /// The refusal a declared `async fn` owes when what it writes is ITSELF a
+    /// future, read off its written return type.
+    ///
+    /// The await where such a call is read already says this. The FUNCTION owes
+    /// it too: emitted, its body answers the inner value, which is the value
+    /// JavaScript's `async` assimilates.
+    pub fn writes_an_assimilated_future(&self, written: Option<&syn::Type>) -> Option<String> {
+        let mark = self.sink.mark();
+        let resolved = written.and_then(|ty| self.resolve_written_type(ty).ok());
+        self.sink.rewind(mark);
+        let resolved = resolved?;
+        let inner = self
+            .project_through(&resolved, "std::future::Future", "Output")
+            .filter(|ty| !ty.mentions_projection() && !ty.mentions_infer())?;
+        Some(assimilated_future(
+            &self.registry.describe(&resolved),
+            &self.registry.describe(&inner),
+        ))
+    }
+
     /// Is this the call of a declared `async fn`?
     ///
     /// Asked quietly: what the callee cannot be read as is the call's own
@@ -83,11 +103,31 @@ pub fn assimilated_future(outer: &str, inner: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::testing::Fixture;
+
     /// A diagnostic is a sentence a person reads, so a lost line continuation
     /// is a defect: the run of spaces it leaves behind is printed verbatim.
     #[test]
     fn the_refusal_for_an_assimilated_future_is_not_mangled() {
         let message = super::assimilated_future("impl Future<Output = u64>", "u64");
         assert!(!message.contains("  "), "the message is mangled: {message}");
+    }
+
+    /// Emitted, such a body answers the INNER value, which is the one
+    /// JavaScript's `async` assimilates before the caller's own await runs.
+    #[test]
+    fn an_async_fn_that_writes_a_future_is_a_hole() {
+        let mut c = Fixture::build(&[(
+            "lib.rs",
+            "pub async fn writes_a_future(n: u64) -> impl std::future::Future<Output = u64> \
+             { async move { n + 1 } }",
+        )]);
+        assert_eq!(
+            c.translated_method("lib.rs", "writes_a_future").trim(),
+            format!("return {};", crate::body::hole_text(&super::assimilated_future(
+                "impl Future<Output = u64>",
+                "u64"
+            )))
+        );
     }
 }

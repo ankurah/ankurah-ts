@@ -64,7 +64,7 @@ class ReactorSubInner<E extends AbstractEntity & Filterable, Ev extends Clone> e
   }
 
   protected override onDrop(): void {
-    const _ = this.reactor.unsubscribe(this.subscriptionId);
+    this.reactor.unsubscribe(this.subscriptionId).drop();
   }
 }
 

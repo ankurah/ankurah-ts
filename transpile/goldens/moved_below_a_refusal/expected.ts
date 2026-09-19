@@ -32,7 +32,7 @@ export function inALoop(b: Token[]): bigint {
       let _moved0 = false;
       try {
         const h = unsupported('`collect` into `BinaryHeap<bigint>` is a `FromIterator` the port has no construction for');
-        const _ = h;
+        h;
         _moved0 = true;
         total = checkedAdd(total, take(rest), 'i64');
       } finally {
@@ -49,7 +49,7 @@ export function aParameter(t: Token): bigint {
   let _moved0 = false;
   try {
     const h = unsupported('`collect` into `BinaryHeap<bigint>` is a `FromIterator` the port has no construction for');
-    const _ = h;
+    h;
     _moved0 = true;
     return take(t);
   } finally {

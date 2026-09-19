@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/util/safeset.rs
-import { Struct, Result, RwLock, HashSet } from '@ankurah/base';
+import { Struct, Result, RwLock, derivedClone, HashSet } from '@ankurah/base';
 
 export class SafeSet<T extends Hash & Eq & Clone & Debug> extends Struct {
   _0: RwLock<HashSet<T>>;
@@ -61,7 +61,7 @@ export class SafeSet<T extends Hash & Eq & Clone & Debug> extends Struct {
   toVec(): T[] {
     const _t0 = this._0.read();
     try {
-      return [...[..._t0.value]];
+      return [...[..._t0.value]].map((e) => derivedClone(e));
     } finally {
       _t0.drop();
     }

@@ -75,7 +75,7 @@ describe('calculated unit tests', () => {
       const counter = Calculated.new(((trigger) => {
         const count = Arc.new(0);
         return new OwnedClosure([trigger, count], () => {
-          const _ = trigger.get();
+          trigger.get();
           return checkedAdd(unsupported('`fetch_add` WRITES what the `Arc<AtomicUsize>` holds, and it is reached through an accessor that hands out the value rather than the place'), 1, 'usize');
         });
       })(trigger.read()));
@@ -162,7 +162,7 @@ describe('calculated unit tests', () => {
             expect(computeCount.value).toEqual(1);
             const unrelatedRead = unrelated.read();
             const _sub = doubled.subscribe(new OwnedClosure([unrelatedRead], (_value: number) => {
-              const _ = unrelatedRead.get();
+              unrelatedRead.get();
             }));
             try {
               source.set(2);

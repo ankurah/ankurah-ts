@@ -139,8 +139,8 @@ impl DiagSink {
         }
     }
 
-    /// How many diagnostics are about the crate being transpiled, and how many
-    /// about the declared std surface.
+    /// How many diagnostics the run REPORTS about the crate being transpiled,
+    /// and how many about the declared std surface.
     ///
     /// They are two different measures and must not be added up. The crate's
     /// count is the coverage metric — how much of *this* crate the engine
@@ -149,19 +149,29 @@ impl DiagSink {
     /// transpiler will ever read, and it is reported against the stub file that
     /// has to change.
     pub fn counts(&self) -> (usize, usize) {
-        let surface = self
-            .diags
-            .borrow()
-            .iter()
-            .filter(|d| is_surface(&d.file))
-            .count();
-        (self.len() - surface, surface)
+        let filed = self.sorted();
+        let surface = filed.iter().filter(|d| is_surface(&d.file)).count();
+        (filed.len() - surface, surface)
     }
 
-    /// Every diagnostic, sorted by file and position.
+    /// Every diagnostic the run reports, sorted by file and position.
+    ///
+    /// One refusal reaches several consumers, and each files it again with what
+    /// IT wrote instead appended, so the bare form stands beside rows that
+    /// contain it word for word. It says nothing they do not, and counting it
+    /// counts one gap twice: it stands only where nothing extends it.
     pub fn sorted(&self) -> Vec<Diag> {
-        let mut out = self.diags.borrow().clone();
-        out.sort();
+        let mut rows = self.diags.borrow().clone();
+        rows.sort();
+        // Sorted by position and then by message, a bare refusal stands
+        // immediately before the first row that extends it.
+        let mut out: Vec<Diag> = Vec::with_capacity(rows.len());
+        for row in rows {
+            match out.last_mut() {
+                Some(last) if extends(&row, last) => *last = row,
+                _ => out.push(row),
+            }
+        }
         out
     }
 
@@ -188,6 +198,15 @@ impl DiagSink {
             }
         }
     }
+}
+
+/// Does `row` say everything `earlier` says, at the same position, and more?
+fn extends(row: &Diag, earlier: &Diag) -> bool {
+    row.file == earlier.file
+        && row.line == earlier.line
+        && row.col == earlier.col
+        && row.message.starts_with(&earlier.message)
+        && row.message[earlier.message.len()..].starts_with("; ")
 }
 
 /// Does this diagnostic name a stub rather than a file of the crate being
@@ -282,6 +301,26 @@ mod tests {
         sink.set_file("proto/src/clock.rs");
         sink.report(span, "method `next` resolved through trait `StreamExt`");
         assert_eq!(sink.len(), 3);
+    }
+
+    /// One refusal reaches several consumers, and each files it again with what
+    /// IT wrote instead appended. The bare form stood beside rows that contain
+    /// it word for word and counted the one gap again.
+    #[test]
+    fn a_forwarded_refusal_is_filed_once_per_position() {
+        let ty: syn::Type = syn::parse_str("Ulid").unwrap();
+        let span = syn::spanned::Spanned::span(&ty);
+        let sink = DiagSink::new();
+        sink.set_file("core/src/util/ready_chunks.rs");
+        sink.report(span, "no method `next` on `ReadyChunks<?0>`");
+        sink.report(span, "no method `next` on `ReadyChunks<?0>`; `next` is dispatched by name");
+        sink.report(span, "no method `next` on `ReadyChunks<?0>`; `unwrap` is the identity");
+        // What each consumer wrote instead is the ledger the count exists for,
+        // so two different tails both stand; only the bare row goes.
+        let filed = sink.sorted();
+        assert_eq!(filed.len(), 2, "{filed:?}");
+        assert!(filed.iter().all(|d| d.message.contains("; ")), "{filed:?}");
+        assert_eq!(sink.counts(), (2, 0));
     }
 
     /// An abandoned translation gives back the right to report: the emitter

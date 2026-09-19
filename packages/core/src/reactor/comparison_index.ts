@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/reactor/comparison_index.rs
-import { Struct, invoke, Invocable, dropOwned, valueEquals, valueNotEquals, unsupported, iterPosition, HashMap, HashSet } from '@ankurah/base';
+import { Struct, invoke, Invocable, dropOwned, derivedClone, valueEquals, valueNotEquals, unsupported, iterPosition, HashMap, HashSet } from '@ankurah/base';
 import { Collatable, Collatable_dispatch_predecessorBytes, Collatable_dispatch_successorBytes, Collatable_dispatch_toBytes } from '../collation';
 import { ComparisonOperator } from '@ankurah/ankql';
 
@@ -110,23 +110,23 @@ class ComparisonIndex<T extends Clone & Eq & Hash & Ord> extends Struct {
       const _v = this.eq.get(bytes);
       if (_v != null) {
         const subs = _v;
-        result.extend([...[...subs]]);
+        result.extend([...[...subs]].map((e) => derivedClone(e)));
       }
     }
     for (const [storedBytes, subs] of this.ne) {
       if (valueNotEquals(bytes, storedBytes)) {
-        result.extend([...[...subs]]);
+        result.extend([...[...subs]].map((e) => derivedClone(e)));
       }
     }
     for (const [_threshold, subs] of this.gt.range(unsupported('an unbounded range is not a sequence the port can build, and this one does not stand where a slice is taken'))) {
-      result.extend([...[...subs]]);
+      result.extend([...[...subs]].map((e) => derivedClone(e)));
     }
     {
       const _v1 = Collatable_dispatch_successorBytes(value);
       if (_v1 != null) {
         const pred = _v1;
         for (const [_threshold, subs] of this.lt.range(unsupported('an unbounded range is not a sequence the port can build, and this one does not stand where a slice is taken'))) {
-          result.extend([...[...subs]]);
+          result.extend([...[...subs]].map((e) => derivedClone(e)));
         }
       }
     }

@@ -22,7 +22,7 @@
 "src/extract.rs" = 788
 "src/infer/context.rs" = 769
 "src/main.rs" = 1230
-"src/match_expr.rs" = 721
+"src/match_expr.rs" = 678
 "src/ownership/tests.rs" = 1203
 "src/registry/build.rs" = 879
 "src/registry/engine_tests.rs" = 1289

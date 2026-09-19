@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/core/src/util/safemap.rs
-import { Struct, Result, RwLock, invokeRef, Invocable, dropOwned, valueNotEquals, HashMap, HashSet } from '@ankurah/base';
+import { Struct, Result, RwLock, invokeRef, Invocable, dropOwned, derivedClone, valueNotEquals, HashMap, HashSet } from '@ankurah/base';
 
 export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Default & Debug> extends Struct {
   _0: RwLock<HashMap<K, V>>;
@@ -89,7 +89,8 @@ export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Defa
   get(k: K): V | null {
     const _t0 = this._0.read();
     try {
-      return _t0.value.get(k);
+      const _m1 = _t0.value.get(k);
+      return (_m1 != null ? derivedClone(_m1) : null);
     } finally {
       _t0.drop();
     }
@@ -99,7 +100,8 @@ export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Defa
     const read = this._0.read();
     try {
       return [...k].map((k) => {
-        const v = read.value.get(k);
+        const _m0 = read.value.get(k);
+        const v = (_m0 != null ? derivedClone(_m0) : null);
         return [k, v];
       });
     } finally {
@@ -137,7 +139,7 @@ export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Defa
   keys(): K[] {
     const _t0 = this._0.read();
     try {
-      return [..._t0.value.keys()];
+      return [..._t0.value.keys()].map((e) => derivedClone(e));
     } finally {
       _t0.drop();
     }
@@ -146,7 +148,7 @@ export class SafeMap<K extends Hash & Eq & Clone & Debug, V extends Clone & Defa
   values(): V[] {
     const _t0 = this._0.read();
     try {
-      return [..._t0.value.values()];
+      return [..._t0.value.values()].map((e) => derivedClone(e));
     } finally {
       _t0.drop();
     }

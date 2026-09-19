@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/ankql/src/ast.rs
-import { Struct, Enum, Result, invokeRef, Invocable, JsonError, serde_json, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape, iterLast, SeqCursor, debugString } from '@ankurah/base';
+import { Struct, Enum, Result, invokeRef, Invocable, JsonError, serde_json, jsonAll, dropOwned, OwnershipFatal, UnsupportedShape, derivedClone, iterLast, SeqCursor, debugString } from '@ankurah/base';
 import { BincodeReader, BincodeWriter } from './codec';
 import { ParseError } from './error';
 import { generateSelectionSql } from './selection/sql';
@@ -95,7 +95,7 @@ export class Selection extends Struct {
       return [...[...items].filter((item) => {
         const colName = item.path.property();
         return !columns.includes(colName);
-      })];
+      })].map((e) => derivedClone(e));
     })(this.orderBy!) : null);
     const orderBy_1 = (orderBy != null ? ((v) => (v.isEmpty() ? null : v))(orderBy!) : null);
     return new Selection(this.predicate.assumeNull(columns), orderBy_1, this.limit);

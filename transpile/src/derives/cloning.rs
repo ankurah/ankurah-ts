@@ -10,6 +10,7 @@
 //! container holds.
 
 use crate::name_map::shape::{js_shape, JsShape};
+use crate::ownership::glue::HandsOut;
 use crate::registry::TypeRegistry;
 use crate::ty::Ty;
 
@@ -49,70 +50,85 @@ pub(crate) fn has_clone(reg: &TypeRegistry, ty: &Ty) -> bool {
     })
 }
 
-/// What `cloned` and `copied` answer with over a sequence or an option, or
-/// nothing where the engine cannot name what the receiver holds.
+/// What `cloned` and `copied` answer with over a sequence, an adaptor or an
+/// option.
 ///
-/// Both adaptors turn a BORROW into an owned value, which for a payload with
-/// drop glue means one clone per value. Written as a bare spread, and as the
-/// receiver itself, they handed back what the collection still owns, and the
-/// release the caller writes beside them dropped each value a second time.
+/// Both turn a BORROW into an owned value, so the caller may write through what
+/// it is handed and release it afterwards. Handed the collection's own value
+/// instead, a write reached the collection and the release dropped that value a
+/// second time.
 pub(crate) fn borrow_taken_over(
     reg: &TypeRegistry,
     receiver_ty: &Ty,
     receiver: &str,
     once: &crate::native_types::nullable::Once<'_>,
 ) -> Option<crate::native_types::MethodTranslation> {
+    let probe = crate::registry::Probe::new(reg, reg.crate_root());
     let shape = js_shape(reg, receiver_ty);
-    // Through the borrow Rust hands out: both adaptors take a sequence or an
-    // option OF `&T` and answer one of `T`, and `&T` is `Clone` whatever `T`
-    // is, so asking about the borrow answered yes for a payload with no clone
-    // at all.
+    // Through the borrow Rust hands out: `&T` is `Clone` whatever `T` is, so
+    // asking about the borrow answered yes for a payload with no clone at all.
     let payload = match &shape {
         JsShape::Array(payload) | JsShape::Nullable(payload) => payload.peel_refs().clone(),
-        _ => return None,
+        // An adaptor standing between the collection and the copy — a `Filter`,
+        // a `Map` — is neither shape, and what it hands out is its
+        // `Iterator::Item`.
+        _ => match crate::ownership::glue::hands_out(&probe, receiver_ty) {
+            HandsOut::Item(item) => item.peel_refs().clone(),
+            HandsOut::Unreadable => return Some(refused(&format!(
+                "this hands back owned values and the engine cannot say what `{}` hands out, so \
+                 each one would be the value the original still owns",
+                crate::name_map::map_ty(reg, receiver_ty)
+            ))),
+            // `cloned` is a name the corpus uses too — `PeerSender::cloned`
+            // hands back a boxed trait object — and that call is the method
+            // table's to answer, not this adaptor's.
+            HandsOut::Other => return None,
+        },
     };
     // A payload the solve did not settle is one nothing is known about, and
     // the site is already reported for being untyped.
     if payload.mentions_any_var() {
         return None;
     }
-    // A payload with NO drop glue keeps the text this has always written:
-    // nothing releases such a value, so nothing releases it twice, and a copy
-    // of it would only be churn.
-    let probe = crate::registry::Probe::new(reg, reg.crate_root());
-    if !crate::ownership::glue::drops_of(&probe, &payload).is_droppable() {
+    // A payload the port copies BY BEING IT — a string, a number, a bigint, a
+    // boolean — cannot be written through, so the text stands as it is. Every
+    // other payload is a mutable object here, whether or not it owes a release.
+    if clone_within(reg, "$", Some(&payload)) == "$" {
         return None;
     }
     if !has_clone(reg, &payload) {
-        let message = format!(
+        return Some(refused(&format!(
             "this hands back an owned value and `{}` has no `clone()` in the port, so what it \
              hands back would be the value the original still owns",
             crate::name_map::map_ty(reg, &payload)
-        );
-        return Some(crate::native_types::MethodTranslation::Refused {
-            fallback: Box::new(crate::native_types::MethodTranslation::Expr(
-                crate::body::hole_text(&message),
-            )),
-            message,
-        });
+        )));
     }
     let written = match shape {
-        // `values()` and `iter()` answer an ITERATOR here, which has no `map`,
-        // so the spread `cloned` has always written comes first.
-        JsShape::Array(_) => {
-            format!("[...{}].map((e) => {})", receiver, clone_within(reg, "e", Some(&payload)))
-        }
         // The payload's copy behind the null guard. `x?.clone() ?? null` reads
         // the place once; every other copy stands behind a `!= null` test that
         // reads it again, so that place is named once before the guard.
-        _ => {
+        JsShape::Nullable(_) => {
             let reads_once = clone_within(reg, "$", Some(&payload)) == "$.clone()";
             let place =
                 if reads_once { receiver.to_string() } else { (once.bind_receiver)(receiver) };
             clone_within(reg, &place, Some(receiver_ty))
         }
+        // `values()`, `iter()` and every adaptor answer an ITERATOR here, which
+        // has no `map`, so the spread `cloned` has always written comes first.
+        _ => format!("[...{}].map((e) => {})", receiver, clone_within(reg, "e", Some(&payload))),
     };
     Some(crate::native_types::MethodTranslation::Expr(written))
+}
+
+/// A copy the port cannot write: the site says so and emits a hole, because the
+/// value it would otherwise hand back is the one the original still owns.
+fn refused(message: &str) -> crate::native_types::MethodTranslation {
+    crate::native_types::MethodTranslation::Refused {
+        fallback: Box::new(crate::native_types::MethodTranslation::Expr(
+            crate::body::hole_text(message),
+        )),
+        message: message.to_string(),
+    }
 }
 
 /// The same, told how deep inside a container it is, so a `map` inside a `map`

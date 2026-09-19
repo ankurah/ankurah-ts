@@ -32,6 +32,7 @@ mod block_type;
 mod scope;
 mod standing;
 mod mismatch;
+mod settling;
 mod vars;
 #[cfg(test)]
 mod await_tests;

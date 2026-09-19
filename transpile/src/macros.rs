@@ -440,14 +440,15 @@ pub async fn f(mut left: mpsc::Receiver<u32>, mut right: mpsc::Receiver<u32>) ->
     #[test]
     fn a_select_that_something_binds_is_written_as_one_expression() {
         let ts = body(BOUND, "f");
+        let lines: Vec<&str> = ts.lines().map(str::trim).collect();
         assert!(
-            ts.contains("const value = await (async () => {"),
+            lines.contains(&"const value = await (async () => {"),
             "the select has to produce the value the `let` binds, and a run of statements \
              cannot stand where an initialiser goes:\n{}",
             ts
         );
         assert!(
-            ts.contains("return 1;") && ts.contains("return 2;"),
+            lines.contains(&"return 1;") && lines.contains(&"return 2;"),
             "each arm has to hand its value back out of the arrow function:\n{}",
             ts
         );

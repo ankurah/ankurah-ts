@@ -181,8 +181,8 @@ class Comparison<G extends GetEvents> extends Struct {
   static newWithAccumulator<G, C extends TClock>(getter: G, subject: C, other: C, budget: number, subjectEventAccumulator: EventAccumulator<Attested<Event>> | null): Comparison<G> {
     let _moved0 = false;
     try {
-      const subjectFrontier = HashSet.from([...[...TClock_dispatch_members(subject)]]);
-      const other_1 = HashSet.from([...[...TClock_dispatch_members(other)]]);
+      const subjectFrontier = HashSet.from([...[...TClock_dispatch_members(subject)]].map((e) => derivedClone(e)));
+      const other_1 = HashSet.from([...[...TClock_dispatch_members(other)]].map((e) => derivedClone(e)));
       const originalOtherEvents = other_1.clone();
       const initialHeadsEqual = valueEquals(subjectFrontier, other_1);
       const headOverlap = initialHeadsEqual;
@@ -215,8 +215,8 @@ class Comparison<G extends GetEvents> extends Struct {
     if (this.initialHeadsEqual) {
       return Result.Ok(new Ordering('Equal', {}));
     }
-    const ids = [...this.subjectFrontier.union(this.otherFrontier)];
-    let resultChecklist = HashSet.from([...[...ids]]);
+    const ids = [...this.subjectFrontier.union(this.otherFrontier)].map((e) => derivedClone(e));
+    let resultChecklist = HashSet.from([...[...ids]].map((e) => derivedClone(e)));
     const _r0 = await this.getter.retrieveEvent(ids);
     if (_r0.isErr()) return Result.Err(_r0.unwrapErr());
     const [cost, events] = _r0.unwrap();
@@ -291,14 +291,14 @@ class Comparison<G extends GetEvents> extends Struct {
       }
     }
     if (fromSubject) {
-      this.subjectFrontier.extend([...[...parents]]);
+      this.subjectFrontier.extend([...[...parents]].map((e) => derivedClone(e)));
       if (this.originalOtherEvents.has(id)) {
         this.unseenOtherHeads = saturatingSub(this.unseenOtherHeads, 1, 'usize');
         this.headOverlap = true;
       }
     }
     if (fromOther) {
-      this.otherFrontier.extend([...[...parents]]);
+      this.otherFrontier.extend([...[...parents]].map((e) => derivedClone(e)));
     }
   }
 
@@ -329,7 +329,7 @@ class Comparison<G extends GetEvents> extends Struct {
     const meet = [...[...this.meetCandidates].filter((id) => {
       const _m0 = this.states.get(id);
       return valueEquals((_m0 != null ? ((state) => state.commonChildCount)(_m0!) : 0), 0);
-    })];
+    })].map((e) => derivedClone(e));
     if (this.headOverlap) {
       return new Ordering('PartiallyDescends', { meet: meet });
     } else {

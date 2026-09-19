@@ -1,5 +1,5 @@
 // MIRRORS: ankurah/storage/sqlite/src/engine.rs
-import { Struct, Result, Arc, RwLock, OwnedClosure, serde_json, dropOwned, tracing, checkedAdd, iterFilterMap, range, debugString, HashMap, HashSet, AsyncMutex, tokio } from '@ankurah/base';
+import { Struct, Result, Arc, RwLock, OwnedClosure, serde_json, dropOwned, derivedClone, tracing, checkedAdd, iterFilterMap, range, debugString, HashMap, HashSet, AsyncMutex, tokio } from '@ankurah/base';
 import { MutationError, RetrievalError, StorageCollection, StorageEngine, TemporaryEntity, State, backendFromString, evaluatePredicate } from '@ankurah/core';
 import { AttestationSet, Attested, Clock, CollectionId, EntityId, EntityState, Event, EventId, OperationSet, State, StateBuffers } from '@ankurah/proto';
 import { PooledConnection, SqliteConnectionManager } from './connection';
@@ -554,7 +554,7 @@ export class SqliteBucket extends Struct implements StorageCollection {
           const _v1 = result.unwrapErr();
           if (_v1.is('QueryReturnedNoRows')) {
             {
-              const _ = createStateTable(c, collectionId);
+              createStateTable(c, collectionId).drop();
               return Result.Err(new SqliteError('Rusqlite', { _0: rusqlite.Error.QueryReturnedNoRows }));
             }
           }
@@ -1066,7 +1066,7 @@ function postFilterStates(states: Attested<EntityState>[], predicate: Predicate,
         e.drop();
       }
     }
-  })())];
+  })())].map((e) => derivedClone(e));
 }
 
 export const DEFAULT_POOL_SIZE: number = 10;

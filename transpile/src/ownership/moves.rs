@@ -48,7 +48,7 @@ pub(super) enum Where {
     /// In THIS statement, with something the statement has still to evaluate
     /// standing between the move and the call that performs it.
     ///
-    /// X5: `take2(token, o.unwrap())` moves `token` on every path the SOURCE
+    /// `take2(token, o.unwrap())` moves `token` on every path the SOURCE
     /// has, so the site read as straight-line and the block wrote no release at
     /// all — and `unwrap` on a `None` throws with the token handed to nobody,
     /// which Rust drops while it unwinds. It is a conditional move like any
@@ -80,7 +80,7 @@ pub trait Consumes {
     /// Is this call one the engine REFUSES, so that a hole stands where the
     /// whole call would have?
     ///
-    /// J4: a hole throws before anything the call would have consumed reaches a
+    /// A hole throws before anything the call would have consumed reaches a
     /// new owner, so the receiver and every argument are still the block's.
     /// Counting them as moved left the block releasing nothing and the values
     /// to the leak check — a leak on the refusal path, which is the one path a
@@ -126,12 +126,12 @@ pub trait Consumes {
 
     /// Does the PORT write a call where the source wrote a place?
     ///
-    /// DD3: `handle.n` on a value behind a `Deref` is emitted as
+    /// `handle.n` on a value behind a `Deref` is emitted as
     /// `handle.deref().n`, and `deref()` on a value somebody has dropped
     /// throws. Rust cannot panic reading a field, so the scan called the move
     /// beside it unconditional — `Event { t: token, n: handle.n }` emitted
     /// `new Event(token, handle.deref().n)` with the token released by nobody.
-    /// The placement rule has asked the emitted TEXT this question since W2;
+    /// The placement rule has long asked the emitted TEXT this question;
     /// the disposition has to ask it too, before the text exists.
     fn place_is_written_as_a_call(&self, expr: &syn::Expr) -> bool;
 
@@ -141,7 +141,10 @@ pub trait Consumes {
     fn consumes_unary_operand(&self, unary: &syn::ExprUnary) -> bool;
 }
 
+mod throwing;
 mod walk;
+
+use throwing::Throws;
 
 pub struct Scan<'c> {
     pub consumes: &'c dyn Consumes,
@@ -224,8 +227,12 @@ impl<'c> Scan<'c> {
         match stmt {
             syn::Stmt::Local(local) => {
                 if let Some(init) = &local.init {
-                    // `let y = x;` hands x to y.
-                    self.moved(&init.expr, at, out);
+                    // `let y = x;` hands x to y. `let _ = x;` binds nothing, so
+                    // Rust leaves x where it was and the enclosing scope still
+                    // releases it; read as a move, the release went missing.
+                    if !matches!(crate::body::strip_binding(&local.pat), syn::Pat::Wild(_)) {
+                        self.moved(&init.expr, at, out);
+                    }
                     self.walk(&init.expr, at, out);
                     if let Some((_, diverge)) = &init.diverge {
                         self.walk(diverge, nested(at), out);
@@ -276,7 +283,7 @@ impl<'c> Scan<'c> {
             }
             // `(x, y)`, `[x]` and `Foo { a: x }` each take their parts by
             // value — left to right, so a part with something after it that
-            // can throw is moved under that (X5).
+            // can throw is moved under that branch.
             syn::Expr::Tuple(tuple) => {
                 let elems: Vec<&syn::Expr> = tuple.elems.iter().collect();
                 for (index, elem) in elems.iter().enumerate() {
@@ -297,7 +304,7 @@ impl<'c> Scan<'c> {
             }
             syn::Expr::Paren(p) => self.moved(&p.expr, at, out),
             syn::Expr::Group(g) => self.moved(&g.expr, at, out),
-            // Y3: `*boxed` MOVES what the box held, and the box with it —
+            // `*boxed` MOVES what the box held, and the box with it —
             // Rust's deref-move, which only a `Box` has — so
             // `if let Predicate::And(l, r) = *left` takes `left`. Without this,
             // the arm that consumed `left` released it again on the way out and
@@ -388,7 +395,7 @@ impl<'c> Scan<'c> {
 /// Where a move stands when something the call still has to EVALUATE can leave
 /// the frame first.
 ///
-/// X5: `take2(token, o.unwrap())` moves `token` on every path the source has,
+/// `take2(token, o.unwrap())` moves `token` on every path the source has,
 /// so the disposition was `Moved` and the block wrote no release at all — and
 /// `unwrap` on a `None` throws with `token` handed to nobody, which Rust drops
 /// while it unwinds. The same holds for a `?` standing in a later field of the
@@ -399,7 +406,7 @@ impl<'c> Scan<'c> {
 /// So a move with anything after it that can throw is a move under a BRANCH:
 /// the block declares a flag, `lifted_above_the_flag` lifts those later
 /// operands above it, and the flag stands immediately before the call.
-/// DD4: and a move with something BEFORE it that can throw is under a branch
+/// And a move with something BEFORE it that can throw is under a branch
 /// too. Rust evaluates a struct literal's fields in the order the literal
 /// writes them, so `Reordered { n: value.unwrap(), token }` runs the `unwrap`
 /// first and moves `token` only if it returned — which means the frame still
@@ -459,142 +466,3 @@ pub(crate) fn local_name(path: &syn::ExprPath) -> Option<String> {
     Some(crate::name_map::to_camel_case(&ident))
 }
 
-
-/// What a run of statements has learned about the ones above the current
-/// statement: where the block still is, which statements can THROW, and where
-/// each name was bound.
-///
-/// HH2: a statement that throws leaves the block, so a move below it is
-/// conditional — but only for a value the block ALREADY owned when it threw.
-/// `let a = Owned::new(1); return take(a);` throws in the statement that BINDS
-/// `a`, and on that path there is no `a` to release: written as conditional it
-/// grew a flag and a `finally` that guard nothing. So the promotion asks both
-/// questions, the throw's position and the binding's.
-struct Throws {
-    reachable: Where,
-    /// The statements above this one that can throw, by index.
-    throwing: Vec<usize>,
-    /// Where each name this block binds was bound. A name that is not here was
-    /// bound above the block — a parameter, or an outer local — and is owned
-    /// before any statement of it runs.
-    bound: std::collections::HashMap<String, usize>,
-}
-
-impl Throws {
-    fn new(at: Where) -> Self {
-        Throws { reachable: at, throwing: Vec::new(), bound: std::collections::HashMap::new() }
-    }
-
-    /// The site as it stands, or under a BRANCH because something above it that
-    /// the block had already given a value to can throw.
-    fn conditional(&self, index: usize, site: Site) -> Site {
-        if site.at != Where::Straight {
-            return site;
-        }
-        let owned_before = |throw: &usize| match self.bound.get(&site.name) {
-            Some(bound) => bound < throw,
-            None => true,
-        };
-        match self.throwing.iter().any(|k| *k < index && owned_before(k)) {
-            true => Site { at: Where::Branch, ..site },
-            false => site,
-        }
-    }
-
-    /// What this statement leaves behind for the ones below it.
-    fn after(&mut self, index: usize, stmt: &syn::Stmt) {
-        if let syn::Stmt::Local(local) = stmt {
-            for name in crate::body::pattern_names(&local.pat) {
-                self.bound.insert(name, index);
-            }
-        }
-        if throws(stmt) {
-            self.throwing.push(index);
-        }
-        if self.reachable == Where::Straight && exits_the_block(stmt) {
-            self.reachable = Where::Branch;
-        }
-    }
-}
-
-/// Can this statement leave the block it stands in, before the statements below
-/// it run?
-///
-/// A `return` and a `?` leave the function; a `break` and a `continue` leave the
-/// enclosing loop, which is only this block when the loop is not inside the
-/// statement itself. A closure's `return` leaves the closure and is not one.
-///
-/// HH2: and a statement that THROWS leaves the block too. `let _n =
-/// o.unwrap(); [a, b]` moves `a` and `b` on every path the source has, so the
-/// disposition was `Moved` and the block wrote no release at all — and a `None`
-/// left both of them handed to nobody, which Rust drops while it unwinds. It is
-/// the same rule DD4 already keeps INSIDE one statement (a move with something
-/// before it that can throw is under a branch), asked across the statements of
-/// a block: the move below becomes conditional, so the block declares a flag
-/// for it, releases it in the `finally` it already writes for its owned locals,
-/// and the flag says the move happened.
-/// Can EVALUATING this statement throw, so that the statements below it do not
-/// run?
-///
-/// Asked of what the statement evaluates in Rust — the same `evaluates_quietly`
-/// the within-a-statement rule asks of an operand — because the two halves have
-/// to agree about what "can throw" means. A `let` with no initialiser, an item,
-/// and a statement built only out of names and literals are quiet; everything
-/// else can leave.
-fn throws(stmt: &syn::Stmt) -> bool {
-    let expr = match stmt {
-        syn::Stmt::Expr(expr, _) => expr,
-        syn::Stmt::Local(local) => match local.init.as_ref() {
-            Some(init) => &init.expr,
-            None => return false,
-        },
-        syn::Stmt::Item(_) | syn::Stmt::Macro(_) => return false,
-    };
-    !crate::body::flags::evaluates_quietly(expr)
-}
-
-fn exits_the_block(stmt: &syn::Stmt) -> bool {
-    struct Exits {
-        found: bool,
-    }
-    impl syn::visit::Visit<'_> for Exits {
-        fn visit_expr(&mut self, expr: &syn::Expr) {
-            match expr {
-                syn::Expr::Return(_) | syn::Expr::Try(_) => {
-                    self.found = true;
-                }
-                syn::Expr::Break(_) | syn::Expr::Continue(_) => {
-                    self.found = true;
-                }
-                // A loop written here catches its own `break` and `continue`;
-                // only a `return` or a `?` inside it reaches past this block.
-                syn::Expr::ForLoop(_) | syn::Expr::While(_) | syn::Expr::Loop(_) => {
-                    let mut inner = Returns { found: false };
-                    syn::visit::visit_expr(&mut inner, expr);
-                    self.found |= inner.found;
-                    return;
-                }
-                // A closure's own exits belong to the closure.
-                syn::Expr::Closure(_) => return,
-                _ => {}
-            }
-            syn::visit::visit_expr(self, expr);
-        }
-    }
-    struct Returns {
-        found: bool,
-    }
-    impl syn::visit::Visit<'_> for Returns {
-        fn visit_expr(&mut self, expr: &syn::Expr) {
-            match expr {
-                syn::Expr::Return(_) | syn::Expr::Try(_) => self.found = true,
-                syn::Expr::Closure(_) => return,
-                _ => {}
-            }
-            syn::visit::visit_expr(self, expr);
-        }
-    }
-    let mut exits = Exits { found: false };
-    syn::visit::Visit::visit_stmt(&mut exits, stmt);
-    exits.found
-}

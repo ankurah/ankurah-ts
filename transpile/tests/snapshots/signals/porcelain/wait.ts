@@ -35,7 +35,7 @@ export async function waitValue<T extends Clone, S extends Signal>(self: S, targ
   }
   const [tx, rx] = tokio.sync.mpsc.unbounded_channel();
   const _subscription = self.listen(Arc.new(new OwnedClosure([tx], (_) => {
-    const __1 = tx.send([]);
+    tx.send([]).drop();
   })));
   try {
     while (true) {
@@ -76,7 +76,7 @@ export async function waitFor<T extends Clone, S extends Signal, F, R>(self: S, 
     }
     const [tx, rx] = tokio.sync.mpsc.unbounded_channel();
     const _subscription = self.listen(Arc.new(new OwnedClosure([tx], (_) => {
-      const __1 = tx.send([]);
+      tx.send([]).drop();
     })));
     try {
       while (true) {

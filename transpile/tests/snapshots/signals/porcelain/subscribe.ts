@@ -38,13 +38,13 @@ export function dynSubscribe<S extends Subscribe, T>(self: S, listener: Invocabl
 
 export function Sender_intoSubscribeListener<T>(self: Sender<T>): SubscribeListener<T> {
   return (value) => {
-    const _ = self.send(value);
+    self.send(value).drop();
   };
 }
 
 export function UnboundedSender_intoSubscribeListener<T>(self: UnboundedSender<T>): SubscribeListener<T> {
   return new OwnedClosure([this], (value) => {
-    const _ = self.send(value);
+    self.send(value).drop();
   });
 }
 

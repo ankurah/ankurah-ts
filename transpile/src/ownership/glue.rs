@@ -169,6 +169,34 @@ fn named(probe: &Probe, id: TypeId, args: &[Ty], ty: &Ty) -> Drops {
     Drops::Own
 }
 
+/// What a receiver of the std iterator family hands the caller.
+///
+/// A copy written over an adaptor needs the same answer a release needs:
+/// `Filter<I, P>` is no sequence shape, and what it hands out is its
+/// `Iterator::Item`.
+pub(crate) enum HandsOut {
+    /// This receiver hands out values of this type.
+    Item(Ty),
+    /// A declared iterator whose `Item` does not normalise — a `Map<I, F>`
+    /// before the closure is known.
+    Unreadable,
+    /// Not one of the family: a container the port writes a shape for, a crate
+    /// type, a boxed trait object, an unsettled unknown.
+    Other,
+}
+
+/// Which of the three this receiver is.
+pub(crate) fn hands_out(probe: &Probe, ty: &Ty) -> HandsOut {
+    let Ty::Named { id, args } = ty.peel_refs() else { return HandsOut::Other };
+    if !probe.reg.is_system(*id) || probe.reg.shapes().form(*id).is_some() {
+        return HandsOut::Other;
+    }
+    match iterator_item(probe, *id, args) {
+        Some(item) => HandsOut::Item(item),
+        None => HandsOut::Unreadable,
+    }
+}
+
 /// What a declared iterator hands out, or nothing when this is not an iterator
 /// or its element type is not settled.
 ///

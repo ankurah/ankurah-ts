@@ -127,7 +127,7 @@ export class LocalProcessConnection<SE1 extends StorageEngine, PA1 extends Polic
               try {
                 tokio.spawn((async () => {
                   _moved0 = true;
-                  const _ = await node_1.handleMessage(message);
+                  (await node_1.handleMessage(message)).drop();
                 })());
               } finally {
                 node_1.drop();

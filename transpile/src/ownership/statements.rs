@@ -347,6 +347,25 @@ impl<'a> BodyTranslator<'a> {
         drops.release_expr(&held).unwrap_or(text)
     }
 
+    /// A `?` whose value nobody binds: `fallible()?;` and `let _ = fallible()?;`.
+    ///
+    /// Rust drops the `Ok` payload at the end of the statement and the wrapper
+    /// with it, so `wrapper.drop()` stands here rather than the wrapper being
+    /// abandoned. An `Option` has no wrapper — the port writes it as a nullable
+    /// — and the `Some` payload is still dropped there.
+    pub(crate) fn discarded_try(&self, try_expr: &syn::ExprTry) -> String {
+        let lowered = self.lower_try(try_expr);
+        match &lowered.wrapper {
+            Some(wrapper) => format!("{}{}.drop();\n", lowered.declaration, wrapper),
+            None => {
+                let release = self
+                    .release_of(&syn::Expr::Try(try_expr.clone()), &lowered.value)
+                    .unwrap_or_else(|| format!("{};", lowered.value));
+                format!("{}{}\n", lowered.declaration, release)
+            }
+        }
+    }
+
     /// Say so where a `select!` has a shape this lowering does not carry over.
     pub fn report_select_gap(&self, tokens: &proc_macro2::TokenStream, what: &str) {
         self.fallback(

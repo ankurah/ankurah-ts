@@ -118,7 +118,7 @@ pub(crate) fn translate_fn_body(
         if let Some(written) = func.rust_return.as_ref() {
             if !names_an_alias(registry, module, written) {
                 if let Ok(resolved) = quiet_type(&tc, written) {
-                    // GG3: a function that RETURNS an opaque iterator hands
+                    // A function that RETURNS an opaque iterator hands
                     // back the CURSOR its caller was holding, and the return
                     // position has to say so — the parameter position already
                     // does. Written as the bare parameter, `identity<I>(walk:
@@ -137,6 +137,16 @@ pub(crate) fn translate_fn_body(
                     };
                 }
             }
+        }
+
+        // An `async fn` whose declared result is itself a future.
+        let assimilated = match func.is_async {
+            true => tc.writes_an_assimilated_future(func.rust_return.as_ref()),
+            false => None,
+        };
+        if let Some(message) = &assimilated {
+            let at = func.rust_return.as_ref().map(syn::spanned::Spanned::span);
+            sink.report(at.unwrap_or_else(proc_macro2::Span::call_site), message.clone());
         }
 
         // The conversions this function's own bounds ask its callers for
@@ -176,7 +186,7 @@ pub(crate) fn translate_fn_body(
         }
 
         let mut translator = body::BodyTranslator::with_context(self_type, tc);
-        // C1: a `&mut T` parameter whose `T` the port writes as a JavaScript
+        // A `&mut T` parameter whose `T` the port writes as a JavaScript
         // VALUE is a `BorrowMut<T>`, and the body reads and writes it through
         // `.value`. Without the cell the callee's writes went nowhere.
         let cell_params: Vec<String> = func
@@ -201,10 +211,16 @@ pub(crate) fn translate_fn_body(
                     written.contains("Formatter")
                 })
             });
-        // I1: the lowering records whether it refused a shape, rather than
+        // The lowering records whether it refused a shape, rather than
         // the emitter searching the rendered body for `unsupported(`.
         let holes_before = body::holes_written();
-        func.body_ts = Some(translator.translate_fn_block(block, &owned_params));
+        func.body_ts = Some(match &assimilated {
+            // Written out, this body answers the INNER value, which is the one
+            // JavaScript's `async` assimilates before the caller's own `await`
+            // runs, so the function stops here instead (R12).
+            Some(message) => format!("return {};\n", body::hole_text(message)),
+            None => translator.translate_fn_block(block, &owned_params),
+        });
         func.body_has_hole = body::holes_written() > holes_before;
         translator.pop_scope();
         // Fallbacks taken on translation paths that carry no sink of their own.

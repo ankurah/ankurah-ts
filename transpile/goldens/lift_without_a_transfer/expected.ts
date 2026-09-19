@@ -33,7 +33,7 @@ export class Rows extends Struct {
 
   topK(spill: Spill, k: number): Token[] {
     try {
-      const _ = [spill, k];
+      dropOwned([spill, k]);
       return [];
     } finally {
       this.drop();
@@ -94,7 +94,7 @@ export class Event extends Struct {
 }
 
 export function tally<T>(x: T): number {
-  const _ = x;
+  x;
   return 0;
 }
 
@@ -134,7 +134,7 @@ export function refusedCalleeUnflagged(tokens: Token[], spill: Spill, limit: num
       if (limit != null) {
         const k = limit;
         {
-          const _ = k;
+          k;
           const _b1 = [spill.clone()];
           try {
             return unsupported('`collect` into `number` is a `FromIterator` the port has no construction for');

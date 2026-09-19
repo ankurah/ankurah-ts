@@ -140,7 +140,7 @@ fn a_self_qualified_static_is_the_class_and_the_method() {
     assert!(!ts.contains("Self"), "{}", ts);
 }
 
-/// I5: a unit struct used as a VALUE, reached under a `use` alias.
+/// A unit struct used as a VALUE, reached under a `use` alias.
 ///
 /// Every single-segment path answered before the aliasing rule could be
 /// reached, so `use crate::value::Unit as OuterUnit;` then `OuterUnit` emitted
@@ -200,12 +200,10 @@ fn a_braced_struct_written_as_a_value_is_refused() {
          pub fn braced() -> Braced { Braced }\n\
          pub fn unit() -> Unit { Unit }",
     )]);
-    let braced = f.translated_method("lib.rs", "braced");
-    assert!(braced.contains("unsupported("), "{braced}");
-    assert!(
-        f.messages().iter().any(|m| m.contains("is declared with braces")),
-        "{:?}",
-        f.messages()
+    assert_eq!(
+        f.translated_method("lib.rs", "braced").trim(),
+        "return unsupported('`Braced` is declared with braces, so its name alone is a type \
+         rather than a value');"
     );
-    assert!(f.translated_method("lib.rs", "unit").contains("new Unit()"));
+    assert_eq!(f.translated_method("lib.rs", "unit").trim(), "return new Unit();");
 }

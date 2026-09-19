@@ -34,6 +34,21 @@ impl BodyTranslator<'_> {
             }
         }
 
+        // `let _ = e;` binds nothing in Rust: what `e` produced dies at the
+        // semicolon, as a discarded statement's value does, and a place read
+        // through `_` is not moved at all.
+        if init.diverge.is_none() && matches!(crate::body::strip_binding(&local.pat), syn::Pat::Wild(_)) {
+            if let syn::Expr::Try(try_expr) = &*init.expr {
+                return self.discarded_try(try_expr);
+            }
+            let annotation = self
+                .types
+                .as_ref()
+                .and_then(|tc| tc.borrow().local_annotation(local));
+            let written = self.expecting(&init.expr, annotation.as_ref(), || self.expr(&init.expr));
+            return format!("{};\n", self.discard(&init.expr, written));
+        }
+
         // Read before the initialiser is translated. An initialiser that is a
         // block of its own — `let sub = { let c = c.clone(); f(c) }` — runs the
         // whole block machinery again and leaves its own statement's answers
@@ -52,18 +67,23 @@ impl BodyTranslator<'_> {
         // be asked before the binding is made — and of EVERY name the pattern
         // binds, because `let [queryId, ..] = ..` shadows each of them on its
         // own.
-        let mut shadowing: Vec<String> = pattern_names(&local.pat)
+        let shadowing: Vec<String> = pattern_names(&local.pat)
             .into_iter()
             .filter(|name| self.redeclares_here(name))
             .collect();
-        // `let _ = expr;` binds nothing in Rust and `const _ = expr;` binds a
-        // variable called `_` here, so a second one in the same scope — beside
-        // a closure parameter the source also wrote `_` — is a duplicate
-        // declaration. It takes a fresh name for the same reason a shadow does.
-        if pattern_names(&local.pat).is_empty() && self.redeclares_here(&pat) {
-            shadowing.push(pat.clone());
-        }
         let already_in_scope = !shadowing.is_empty();
+
+        // Two things a local cannot hold in this port. The name is still
+        // declared, because everything below it reads that name; the hole it is
+        // given stops the program there rather than answering something else.
+        if let Some(message) = self.refused_in_a_local(&init.expr) {
+            let emitted = match already_in_scope {
+                true => self.freshened_pattern(&local.pat, &shadowing),
+                false => pat.clone(),
+            };
+            let hole = self.hole(syn::spanned::Spanned::span(&init.expr), message);
+            return format!("const {} = {};\n", emitted, hole);
+        }
 
         // The initialiser is translated before the binding exists, because
         // it is written in the scope the `let` is shadowing:
@@ -134,7 +154,7 @@ impl BodyTranslator<'_> {
             );
         }
 
-        // C1: a local this body hands out as `&mut` and whose type the port
+        // A local this body hands out as `&mut` and whose type the port
         // writes as a JavaScript VALUE lives in a cell, because a number, a
         // string and a boolean are copied at the call and the callee's writes
         // would go nowhere. Decided here, where the type is known.
@@ -153,7 +173,7 @@ impl BodyTranslator<'_> {
                 });
         // A finisher the engine had to REFUSE wrote a hole, not a slot, and
         // reading `.value` off a hole says nothing the hole does not already.
-        // The disposition comes from the LOWERING (I1): reading it off the
+        // The disposition comes from the LOWERING, not from the text: reading it off the
         // rendered text meant an initialiser whose value carried the characters
         // `unsupported(` for any other reason stopped binding the slot.
         let entry_slot = entry_slot == EntryFinish::Slot;
@@ -248,6 +268,31 @@ impl BodyTranslator<'_> {
 }
 
 impl BodyTranslator<'_> {
+    /// What a local cannot hold, said at the `let` that would hold it.
+    ///
+    /// A declared `async fn` answers with what it WRITES here while the
+    /// emission answers with a promise, so a local holding the call is typed as
+    /// the output and the release written for it lands on a `Promise`. A
+    /// function ITEM keeps no signature in a local, so a call through the alias
+    /// writes its arguments at no declared width: `f(5)` hands a JavaScript
+    /// number to a signature declared in `bigint`.
+    fn refused_in_a_local(&self, init: &syn::Expr) -> Option<String> {
+        let tc = self.types.as_ref()?.borrow();
+        if tc.awaits_a_declared_async_call(init) {
+            return Some(
+                "this is a call to a declared `async fn`, which this port answers with what the \
+                 function writes while the emission answers with a promise, so a local can hold \
+                 neither"
+                    .to_string(),
+            );
+        }
+        tc.names_a_function_item(init).then(|| {
+            "this names a function rather than calling it, and a local keeps no signature, so a \
+             call through it would write its arguments at no declared width"
+                .to_string()
+        })
+    }
+
     /// Does this `let` bind an atomic?
     ///
     /// An atomic IS its value in this port, so every write through the shared
@@ -264,5 +309,42 @@ impl BodyTranslator<'_> {
                 Err(_) => false,
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::testing::Fixture;
+
+    const SOURCE: &str = "pub struct Held { pub n: u64 }\n\
+         pub fn add_one(n: u64) -> u64 { n + 1 }\n\
+         pub async fn make_held(n: u64) -> Held { Held { n } }\n\
+         pub fn through_an_alias() -> u64 { let f = add_one; f(5) }\n\
+         pub async fn hold_a_future() -> u64 { let future = make_held(3); future.await.n }";
+
+    /// A local aliasing a function item keeps no signature, so the call through
+    /// it wrote a JavaScript number where the declaration says `bigint`.
+    #[test]
+    fn a_function_item_held_in_a_local_is_a_hole() {
+        let mut c = Fixture::build(&[("lib.rs", SOURCE)]);
+        assert_eq!(
+            c.translated_method("lib.rs", "through_an_alias").trim(),
+            "const f = unsupported('this names a function rather than calling it, and a local \
+             keeps no signature, so a call through it would write its arguments at no declared \
+             width');\nreturn f(5);"
+        );
+    }
+
+    /// The call answers what the function writes here and the emission answers
+    /// with a promise, so the local held neither and its release landed on one.
+    #[test]
+    fn a_declared_async_call_held_in_a_local_is_a_hole() {
+        let mut c = Fixture::build(&[("lib.rs", SOURCE)]);
+        assert_eq!(
+            c.translated_method("lib.rs", "hold_a_future").trim(),
+            "const future = unsupported('this is a call to a declared `async fn`, which this \
+             port answers with what the function writes while the emission answers with a \
+             promise, so a local can hold neither');\nreturn (await future).n;"
+        );
     }
 }

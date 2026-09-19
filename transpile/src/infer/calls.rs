@@ -62,8 +62,8 @@ impl TypeContext<'_> {
         // `impl IntoIterator for &'a Vec<T>`, whose `Item` is `&T`, where
         // starting at `Vec<T>` finds the by-value impl and an owned `Item`.
         // `(&v).into_iter()` therefore came out as a loop that released the
-        // caller's elements — a double drop where the block released them too
-        // (E11). The borrow is put back here and nowhere else, so only the
+        // caller's elements — a double drop where the block released them
+        // too. The borrow is put back here and nowhere else, so only the
         // probe sees it; the deref chain takes it straight off again, which is
         // what Rust does when the method really is the by-value one.
         let receiver_ty = match unparenthesise(receiver) {
@@ -410,6 +410,22 @@ impl TypeContext<'_> {
         Some((sig, subst))
     }
 
+
+    /// Does this expression NAME a function rather than call one?
+    ///
+    /// `let f = add_one;` binds a function ITEM, and nothing here keeps its
+    /// signature, so a call through the alias writes its arguments at no
+    /// declared width.
+    pub fn names_a_function_item(&self, expr: &syn::Expr) -> bool {
+        let syn::Expr::Path(path) = unparenthesise(expr) else { return false };
+        if path.path.get_ident().is_some_and(|name| self.lookup(&name.to_string()).is_some()) {
+            return false;
+        }
+        let mark = self.sink.mark();
+        let found = self.free_function_sig(path).is_some();
+        self.sink.rewind(mark);
+        found
+    }
 
     /// What a free function this path names declares.
     ///

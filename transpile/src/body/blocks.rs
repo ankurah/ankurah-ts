@@ -220,7 +220,7 @@ impl BodyTranslator<'_> {
         // read before it is translated because `local()` acts on it.
         self.set_stmt_dispositions(stmt, dispositions, ordinals);
 
-        // O6: a flag stands immediately above the TRANSFER, and `?` is the
+        // A flag stands immediately above the TRANSFER, and `?` is the
         // one shape whose transfer is in a hoist. `flag_sets_split` says which.
         let (flags_above, flags) = self.flag_sets_split(stmt);
         let mut out = String::new();
@@ -277,7 +277,7 @@ impl BodyTranslator<'_> {
         } else {
             self.stmt(stmt)
         };
-        // K3: a statement that REFUSED hands nothing away, so its move flags
+        // A statement that REFUSED hands nothing away, so its move flags
         // are lies — a set flag turns the block's release off for a value the
         // hole left sitting there (`core/value/cast_predicate.ts`'s `ExprList`
         // arm leaked its payload on every call). Taking the flags off puts the
@@ -305,7 +305,7 @@ impl BodyTranslator<'_> {
         };
         *self.own.statement_awaits.borrow_mut() = previous_awaits;
         let prelude = std::mem::replace(&mut *self.own.prelude.borrow_mut(), previous_prelude);
-        // U3: a flag whose transfer is inside a `?` operand travels with that
+        // A flag whose transfer is inside a `?` operand travels with that
         // operand's own hoist and stands immediately above it. What is left
         // here is a transfer no hoist claimed — a `?` the lowering did not
         // hoist at all — and that flag still has to stand above the prelude,
@@ -317,7 +317,7 @@ impl BodyTranslator<'_> {
             out.push_str(line);
             out.push('\n');
         }
-        // I4: part of a refused statement RAN before it refused. A `?` operand
+        // Part of a refused statement RAN before it refused. A `?` operand
         // standing to the left of the hole is evaluated and its temporary holds
         // what it took, and so is every hoist above a hole that is in the
         // statement's own TEXT. Releasing the statement's source values above
@@ -325,7 +325,7 @@ impl BodyTranslator<'_> {
         // releases go in a `finally` around the statement, each under a flag
         // set where the transfer is written.
         //
-        // R9/D11: there used to be two walks and two wrappers here, one for a
+        // There used to be two walks and two wrappers here, one for a
         // refusal in a hoist and one for a refusal in the text, and only the
         // first knew about by-value parameters — so `let _v = take2(held,
         // <hole>);` released neither of its two parameters. There is one walk
@@ -372,7 +372,7 @@ impl BodyTranslator<'_> {
                     }
                 }
             }
-            // N4: the flag's two halves are in two streams, and both are here.
+            // The flag's two halves are in two streams, and both are here.
             let mut owned = owned;
             self.drop_dead_flags(&mut inner, &rest, &mut owned);
             let mut tail = rest;
@@ -422,25 +422,7 @@ impl BodyTranslator<'_> {
                             let fmt_str = macros::translate_macro(extract_macro(&try_expr.expr).unwrap(), self);
                             return format!("_result += {};\n", fmt_str);
                         }
-                        // A `?` whose value nobody binds. Rust drops the `Ok`
-                        // payload at the end of the statement, and the wrapper
-                        // with it; `wrapper.drop()` cascades into both, which
-                        // is why the wrapper is not simply abandoned here.
-                        let lowered = self.lower_try(try_expr);
-                        return match &lowered.wrapper {
-                            Some(wrapper) => {
-                                format!("{}{}.drop();\n", lowered.declaration, wrapper)
-                            }
-                            // An `Option` has no wrapper here — the port writes
-                            // it as a nullable — but Rust still drops the `Some`
-                            // payload at the end of the statement.
-                            None => {
-                                let release = self
-                                    .release_of(&syn::Expr::Try(try_expr.clone()), &lowered.value)
-                                    .unwrap_or_else(|| format!("{};", lowered.value));
-                                format!("{}{}\n", lowered.declaration, release)
-                            }
-                        };
+                        return self.discarded_try(try_expr);
                     }
                 }
                 // A statement that ends in a semicolon throws its value away.

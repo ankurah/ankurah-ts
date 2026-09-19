@@ -178,7 +178,7 @@ export class IndexedDBBucket extends Struct implements StorageCollection {
             _moved3 = true;
             const _r4 = Result_Event_require(foo, 'get old entity');
             if (_r4.isErr()) return Result.Err(MutationError.fromAnyhowError(_r4.unwrapErr()));
-            const _ = _r4.unwrap();
+            _r4.drop();
             const _r5 = Result_JsValue_require(oldRequest.result(), 'get old entity result');
             if (_r5.isErr()) return Result.Err(MutationError.fromAnyhowError(_r5.unwrapErr()));
             const oldEntity = _r5.unwrap();

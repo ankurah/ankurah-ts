@@ -791,16 +791,18 @@ The engine mints an unknown for each and lets the body bind it.
   step of the solve: `Slot<A, B = ()>` built as `Slot::new(1u8, thing)` reads
   `B` off the argument, as Rust does, and the default is what stands where the
   body said nothing. Where the body says something else the body wins and the
-  declaration's default is dropped. Once a default has fallen into place a method
-  that could not resolve through an open unknown can, so the walk runs to a
-  fixed point again after.
+  declaration's default is dropped; the site composes a report saying both, and
+  that report is filed inside the quiet walk and rewound with it, so nothing
+  reaches the run. Once a default has fallen into place a method that could not
+  resolve through an open unknown can, so the walk runs to a fixed point again
+  after.
 - **Constraints come from the body, one source at a time.** A call's declared
   parameter against what the argument actually is, for an associated function,
   for a method and for a FREE function alike; a `for` loop's pattern against the
   sequence's item; a place and the value written into it; each `return`'s value
   and the function's tail; a struct literal's fields; a pattern against its
-  scrutinee; `.await` projecting `Future::Output` where the impl table read it
-  through; a `let`'s annotation against its initialiser; and the CALLABLE
+  scrutinee; a comparison's two operands and the arms of a branch that join;
+  what `.await` answers with; a `let`'s annotation against its initialiser; and the CALLABLE
   position a closure stands in against what the closure's own body answers,
   asked from inside the block that prepared the closure's captures, because at
   the call those names are not in scope. A macro's arguments are tokens, so no
@@ -811,6 +813,15 @@ The engine mints an unknown for each and lets the body bind it.
 - **A constraint runs when EITHER side carries an unknown.** `let mut found =
   Vec::new(); fill(&mut found, n)` decides `found`'s element at a parameter
   whose own type is written out in full.
+- **`.await` reads a declared `async fn` first, and refuses one that writes a
+  future.** A call to a declared `async fn` returns what it writes rather than a
+  future (4.10), so awaiting one is the identity; read second it would project a
+  declared result that is itself a future and answer what two awaits answer.
+  Such a function is REFUSED, because JavaScript's `async` assimilates a
+  returned thenable and the outer future is gone before the written `await`
+  runs. Everything else answers `Future::Output` where the impl table read the
+  projection through — an answer still naming a projection or a written `_` says
+  less than the base does — and where it did not, the site says so.
 - **A declared parameter is read through the receiver first.** An adaptor writes
   its bound in its own terms — `FnMut(Self::Item) -> B` — and a projection left
   standing types nothing inside the closure, so each parameter is normalised
@@ -824,33 +835,47 @@ The engine mints an unknown for each and lets the body bind it.
   The unification looks through ONE `&` the declared side has over a value
   carrying none, because the scope holds some receivers without the borrow Rust
   gives them — `self` inside `impl .. for Arc<Inner<T>>` is read as the `Arc`
-  itself. The DISAGREEMENT is judged by depth: a value carrying more references
-  than the declaration wants still meets it, which is Rust's deref coercion, and
-  a declaration carrying two more than the value does not.
+  itself. A declaration carrying two more references than the value does not
+  meet it. A BORROW handed where a value is owned — Rust has no coercion in
+  that direction — is read as a disagreement only where the declared type has
+  DROP GLUE, because the rule exists to catch a callee releasing what the caller
+  still holds, and where there is nothing to release the port writes the same
+  code either way. Uniqueness is not gated that way: a shared borrow never
+  satisfies a unique one, whatever the target owns, because a lost write has
+  nothing to do with drop glue.
 - **A slice and a sequence that derefs to it agree about their ELEMENT.**
   `&Vec<T>` stands where `&[T]` is declared, and the port writes both as one
   array; a `Box` is such a sequence only of what it boxes a SLICE of, and a
   slice beside something that is not a sequence at all disagrees. The element
   comparison runs where the structural walk has already refused, and it reports
   what it finds.
-- **Rust coerces where a value MEETS a declared type and nowhere inside one.**
-  An argument against its parameter, a `let` against its annotation, a return
-  against the declared type and a field against its declaration are coercion
-  sites, so `Box<Expr>` stands where `Expr` is declared; inside a type argument
-  nothing is coerced, so `Vec<Box<Expr>>` handed where `Vec<Expr>` is declared
-  is a contradiction.
-- **A type parameter the CALLEE owns never binds the caller's unknown.**
+- **What a position DOES with two types decides how their references are read,
+  and there are three positions.** An argument against its parameter, a `let`
+  against its annotation, a return against the declared type and a field against
+  its declaration all hand a value over, and Rust coerces there, so `Box<Expr>`
+  stands where `Expr` is declared. Inside a type argument nothing is coerced, so
+  `Vec<Box<Expr>>` handed where `Vec<Expr>` is declared is a contradiction. A
+  COMPARISON is the third: nothing is handed over and nothing is released, and
+  Rust's `PartialEq<Rhs>` compares through a borrow either side carries, so
+  `field == primary_key` over a `String` and a `&str` says nothing about borrows
+  and still says the two hold one type.
+- **A constraint with a component the CALLEE owns is skipped whole.**
   `notify_change<C>(changes: Vec<C>)` says `C` is one type per call it makes,
   not one the caller's body can decide, and binding it left the caller holding a
-  name nothing in that file declares.
+  name nothing in that file declares. Today the WHOLE constraint goes, not only
+  the component carrying that parameter, so what the rest of it would have bound
+  and reported is lost with it: `take_generic(&value, Tag::new(..))` says
+  nothing and the temporary leaks.
 - **A bound is a capability, not a type.** `impl Fn() -> T` and a closure are
   never the same type, and `impl IntoIterator<Item = F>` and a `Vec<Tag>` are
   never the same type; unifying the two says something false about both. A
   parameter whose type is a bound is constrained by what it ANSWERS — the
-  callable's output against what the value there answers when called — and by
-  what it PROJECTS — each associated type the bound names, against the same
-  projection taken through the argument's own type. A bound meeting a type that
-  merely coerces to it binds nothing and refuses nothing.
+  callable's output against what the value there answers when called, asked only
+  while that output still carries an unknown, so `Wrap::build(|| "x")` against
+  `F: Fn() -> u32` says nothing at all — and by what it PROJECTS — each
+  associated type the bound names, against the same projection taken through the
+  argument's own type. A bound meeting a type that merely coerces to it binds
+  nothing and refuses nothing.
 - **A closure is typed by the position it stands in, and the position is
   recorded.** The closure's parameters come from the bound at that position, and
   the constraint walk meets the closure again on its way into the body, after the
@@ -863,9 +888,12 @@ The engine mints an unknown for each and lets the body bind it.
   WRITES the body says what it could not do, where it stands. A contradiction is
   the exception: the table keeps it, the end of the solve re-checks it against
   the table the solve left, and it is filed once from there, past the rewind.
-  The writing walk does not report one — it types expressions the solve never
-  reached, with every fallback in place, so a disagreement it finds is its own
-  reading rather than the program's.
+  The writing walk does not report a contradiction — it types expressions the
+  solve never reached, with every fallback in place, so a disagreement it finds
+  is its own reading rather than the program's. What it DOES report is that
+  disagreement itself, as a diagnostic at the expression: the two walks read one
+  body and must read it the same way, and where they do not the site says so
+  rather than the batch stopping.
 - **A constraint with no solution is a durable result.** Every variable it
   touched is POISONED — and so is what it was read THROUGH, because a method's
   parameter is the receiver's own type argument substituted in — and a poisoned
@@ -922,10 +950,108 @@ The engine mints an unknown for each and lets the body bind it.
   closure is its own function. Those two are where the annotation is written and
   nowhere else — a sequence of BYTES excepted, because it is a `Uint8Array` and
   `[]` is not one.
+- **A candidate the solve has not settled is not overtaken; a candidate a FACT
+  rules out still is.** A shallower impl loses to a deeper one only where the
+  deeper one's bounds are decided: no declaration, an open subject and the depth
+  limit are facts, while a bound the solve has not reached is not one.
+- **What a contested call PRODUCES is not read until the solve says which method
+  it is.** The callee written at the site is the shallow candidate, and its
+  return is held at an unknown keyed by the written site until the contest ends.
+- **A projection may read through an impl whose bounds are merely unsettled, but
+  only as a SECOND pass**, after every impl that applies outright; and the
+  answer it gives back is held at an unknown of its own, keyed by the written
+  site. A fresh unknown per round is one the fixed point never stops minting,
+  which diverged the solve on `storage/indexeddb-wasm`. Everything downstream
+  reads the answer through the table, so the engine can still take it back.
+- **An answer is withdrawn along the walk that carried it.** A constraint
+  reaching such an unknown hands the answer to every other unknown the same
+  unification walk reached, and withdrawing the answer withdraws them; the
+  receiver is never asked. This is the rule poisoning already follows, applied
+  to an answer rather than to a contradiction.
+- **A bound the solve never settles is not a false one.** An answer standing on
+  an unknown nothing decided keeps its answer and says nothing; only a subject
+  the impl table has READ and found no impl for withdraws one. TWO holes in this
+  are known and open: an answer that does not itself carry the unsettled unknown
+  files nothing anywhere, and a bound on the enclosing function's own rigid
+  parameter is answered as an open subject although that body can never acquire
+  it — a blanket impl, a supertrait or a `where` clause on the enclosing impl
+  can make such a bound true, so reading an absent declared bound as false would
+  file rows about programs that compile.
+- **`Rhs = Self` is a default the impl table can overrule, and the same-type
+  rule is what is left when it cannot.** Where a left-hand type has several
+  comparison impls and the right operand fits more than one, or none, both sides
+  are held to one type, which is what reports two types with no impl between
+  them. The engine does not pick between impls.
+- **A type with its unknowns still standing is for the SOLVE only.** Every
+  as-written reader falls back to the settled answer for the walk that writes a
+  body, and a pattern that takes a value apart is handed the shape the table
+  settled — a plain name keeps the type as written.
+- **Where the walk is standing is a fact BOTH walks keep.** An answer withdrawn
+  at the end of the solve was read deep inside an expression, which is the only
+  thing able to say where; the pre-pass also stands at a `for` loop's sequence
+  while it asks for the item type, the one question asked from outside any
+  expression.
+- **An index of an `{integer}` kind is a `usize`, by constraint**, and the
+  answer is carried back to where the literal was written.
+- **Two types are one representation only where the emitted code writes nothing
+  between them — by value.** Through a reference every deref hop stands.
+- **A const-generic array length stands for ANY length; a named constant stands
+  for itself.** The engine carries no const generics as values and can bind
+  none, so `[T; N]` in an impl matches a concrete array and two lengths written
+  as numbers must agree; a `const LEN: usize = 4` is not resolved to its
+  integer, so `[T; FOUR]` matches neither `[u8; 8]` nor `[u8; 4]`. That is a
+  refusal where Rust accepts, which is the safe direction.
+- **A coercion through a holder is REPORTED, not written.** Rust coerces
+  `&Arc<Inner>` to `&Inner` and the port keeps an `Arc`'s payload behind an
+  accessor, so the emitted call hands the holder over and the callee reads
+  `undefined`. The method-call path writes the accessor; a coercion site does
+  not, and says so until it does.
 - **Ownership reads types and does not take part.** `drops_of` answers
   `Drops::Unknown` for an unresolved variable exactly as it does for `Ty::Infer`,
   and every ownership question is asked in the second walk, where the table is
   already solved — which the assertion above is what holds it to.
+- **A diagnostic a run reports is one gap said once.** A repeat of an exact
+  message at an exact position is dropped as it is filed, and where one refusal
+  reaches several consumers — each filing it again with what IT wrote instead
+  appended — the bare form is dropped in favour of the rows that contain it. Two
+  DIFFERENT things done instead both stand: that ledger is what the count is
+  for.
+
+### 4.8b What the inference step settled outside the body solver
+
+The step's own rules about ATOMICS. An atomic IS the value it holds in this
+port, so every operand of an atomic update is bound to a `const` first,
+including a literal, and each is evaluated exactly once in Rust's order; an
+atomic's own method the port does not write is a hole, while any other method on
+it passes through to the number lowering, which is what keeps `clone` working at
+seven corpus sites; `get_mut` is refused, because Rust hands back `&mut T` and
+the port has no reference to hand out; an atomic's own methods are read only
+where the receiver IS an atomic, so a `.store(..)` on a plain number is not one;
+and `fetch_and` / `fetch_or` / `fetch_xor` are refused on an atomic whose width
+the port does not hold, because JavaScript's bitwise operators read the low 32
+bits and the answer would silently lose the rest.
+
+COPYING what a borrow hands out. `cloned` and `copied` turn a borrow into an
+owned value, so the caller may write through what it is handed and release it
+afterwards. The copy is written wherever the port's clone of the payload is
+anything other than the place itself: a string, a number, a bigint and a boolean
+are their own copy and keep the text as it stands, and everything else — a
+sequence, a class, a `Copy` struct, a type parameter the engine cannot name — is
+a mutable object here and is copied, a type parameter through `derivedClone`,
+which decides by the value's own surface at run time. A payload that must be
+copied and has no `clone()` in the port is a diagnostic and a hole. The receiver
+may be a sequence, an option or an adaptor, whose payload is its
+`Iterator::Item`; a declared iterator whose `Item` does not normalise is a hole,
+and a receiver that is not of that family at all is not this adaptor — the
+corpus declares a `cloned` of its own — so the method table answers it.
+
+A NAME in a value position. A tuple struct's bare name is its own constructor
+and stays a value; a braced struct and a braced enum variant are refused there
+and emit a hole, because the port writes nothing a bare name could stand for.
+
+A value THROWN AWAY. `let _ = e;` binds nothing in Rust: what `e` built dies at
+the semicolon, exactly as a statement's discarded value does, and a place read
+through `_` is not moved at all, so the enclosing scope still releases it.
 
 ### 4.9 Scopes and names
 
@@ -1136,8 +1262,9 @@ addressed by the step that found it.
   idea used to disagree: the atomic went on counting in a double. `AtomicU64` is
   the one atomic this cannot be written for, because the port spells it a
   `number` and Rust holds a `u64` in it — a `bigint` operand beside a `number`
-  place is something JavaScript refuses to mix — so its update stays an ordinary
-  `+=` and the site says so.
+  place is something JavaScript refuses to mix — so its update is REFUSED and
+  emits a hole rather than wrapping at a width the port does not hold.
+  `AtomicI64` is refused earlier still: nothing in the port writes it at all.
 
   A width the port spells `number` can still be handed an answer past
   `Number.MAX_SAFE_INTEGER`. The helper PANICS there rather than returning a

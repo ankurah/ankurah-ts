@@ -50,7 +50,16 @@ pub const TEXT_ONLY: [(&str, &str); 4] = [
 /// README already doubts. None of them is a reason to relax the check.
 /// What each golden still fails to compile with, as one entry per error:
 /// `<file>:<code>`, sorted. Every entry is a decision somebody read.
-pub const TYPECHECK_DEBT: [(&str, &[&str], &str); 8] = [
+pub const TYPECHECK_DEBT: [(&str, &[&str], &str); 9] = [
+    (
+        "a_cloned_generic_payload",
+        &["a_cloned_generic_payload/input.ts:TS2304"],
+        "the class carries the bound Rust wrote — `V extends Clone` — and the port declares no \
+         `Clone` for it to name, so the emitted class mentions a type nothing exports. What the \
+         golden proves is the COPY: a payload the engine cannot name is copied through \
+         `derivedClone`, which decides by the value's own surface at run time. The corpus's \
+         `core/util/safemap.ts` carries the same unresolved bound",
+    ),
     (
         "an_unknown_nothing_settles",
         &[

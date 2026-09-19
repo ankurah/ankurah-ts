@@ -73,7 +73,7 @@ export function findThenNext<I extends Iterable<Token>>(walk: SeqCursor<Token>):
 export function anyThenCount<I extends Iterable<Token>>(walk: SeqCursor<Token>): number {
   let _moved0 = false;
   try {
-    const _ = walk.any((t) => {
+    walk.any((t) => {
       try {
         return t.n === 1n;
       } finally {

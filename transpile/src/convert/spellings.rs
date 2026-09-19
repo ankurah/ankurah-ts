@@ -66,4 +66,5 @@ impl BodyTranslator<'_> {
             tc.borrow().registry.shapes().form(id),
             Some(crate::name_map::system_shapes::Form::Nullable)
         )
-    }}
+    }
+}
